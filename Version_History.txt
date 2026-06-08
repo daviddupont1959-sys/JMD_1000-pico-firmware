@@ -1,0 +1,72 @@
+'''
+Motion Detector by Just Me Designs (JMD)
+    This project is to create a motion detector which can send email messages to configured addresses in the event that no motion is detected after
+     a configured time.
+    It is meant to monitor that a person is actively moving in their environment, and alert loved ones if it appears they might have become unable to move
+    It should be placed in a location that cannot detect a person if they have fallen in range of the detector,
+     and could trigger it with arm movements or something like that.  The recommendation would be to plug it into a counter outlet in the kitchen area.
+     The counter would block the detector from detecting the person on the floor even directly below the sensor.
+    
+    Two sets of email addresses can be configured
+        A. Monitor email.  These addresses will receive an email daily to let the users know that the monitor is still operating.
+        B. Alert email.  These addresses should be connfigured to generate text messages to the loved ones and will be sent when
+           the configured timeout has occurred.  Most wireless carriers provide a special email address that will immediately send
+           a test message to the subscriber.  For T-Mobile the address would look like this '6035983717@tmomail.net'
+    
+    2024/12/26 - Eliminate multi-threaded operation.
+        Coding has been going on for a while, and I was trying to get the detecting code to run in a separate thread so that
+        other things could be done in the main thread.  I came to the realization that there is nothing else that might need
+        to be done once the device is configured.  Therefore I've decided to make a rather significant change to the code, and
+        set it up to allow BlueTooth copnnections in the first 30 seconds after power on in order to allow for configuration,
+        then enter into the monitor state, from which the only end is to remove power.
+    
+    2025/01/14 - Major restructure to clean up the code, and allow download of log files via bluetooth.
+        Bluetooth connections are now allowed at any time.
+        I might also provide for firmware updates over bluetooth. (This presents the problem of what to do if the update breaks the device.)
+        
+    2025/02/08 - Major development is complete.  Started work on making the code more robust especially with regards to internet connection stuff.
+    
+    2025/03/19 - added code to track and indicate firmware revision. Version 1.00
+    
+    2025/03/25 - Version 1.01
+                 Fix time update code so it only fetches time ONCE a week from the internet.  Previous version repeated fetch several times.
+                 
+    2025/03/29 - Version 1.02
+                 Changed order of log file archives so that log_1.txt is most recent, and log_5.txt is oldest
+    
+    2025/04/02 - Version 1.03
+                 Added TST bluetooth command to test email and text messaging to make sure it's configured correctly.
+        
+    2025/04/17 - Version 1.04
+                    Made a change so that if the internet connection fails the device wuill retry every 5 minutes
+                    To support this I moved the creastion of the internet class to a separate definition
+                    Main code changes made around line #374, the original code was replaced with a call to this new def around line #327
+                    That code is around line #260
+    
+    2025/04/21 - Version 1.05
+                    Discovered that the update function needs work.  Also want to add a way to get the current version when connected using the app.
+                    
+    2025/05/13 - Version 1.06
+                    Noticed that when internet connection doesn't work, and time gets set to 2000, it needs to retry every so often,  I'm thinking every 15 minutes?
+                    Also noticed that weekly time update is happening on Monday when it was supposed to be on Sunday
+                    
+    2025/06/08 - Version 1.07
+                    Trying to add enough log file debug messages to help get this working next time I get a chance to try it at Dad's house.
+                    2025/07/27 - confirmed working, but text messages aren't being sent.
+    
+    2025/07/28 - Version 1.08
+                    T-Mobile decided to stop supporting the email to SMS gateway.
+                    Need to come up with a long term solution, but for now.....
+                    Changed sending alerts from text to email on alert, and alert cancelled.
+                    
+    2025/09/04 - Version 2.00
+                    Modified code to use MQTT for communication across the Internet.
+    
+    2026/05/30 - Version 2.01
+                    After a long break to digitize some film, revisiting this project.
+                    Updated MQTT topic structure. (With AI help)
+                    Updated handler for MQTT requests. (With AI help)
+                    
+                    
+                    
+'''

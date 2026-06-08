@@ -7,10 +7,11 @@ import time
 
 class RTCManager():
     
-    def __init__(self, dateTime):
+    def __init__(self):
         self.rtc = RTC()
-        self.setDateTime(dateTime)
-        self.timeUpdated = dateTime
+        # I don't think I need to set the date / time when creating the instance of the class.
+        # self.setDateTime(dateTime)
+        # self.timeUpdated = dateTime
 
     def calculate_day_of_week(self, year, month, day):
         """
@@ -72,7 +73,8 @@ class RTCManager():
         # For all other months in the range
         return True
 
-    def setDateTime(self, dateTime):  #dateTime is a list of[year, month, date, hour, minute, second]    
+    # WAS - def setDateTime(self, dateTime):  #dateTime is a list of[year, month, date, hour, minute, second]    
+    def setRTC(self, dateTime):  #dateTime is a list of[year, month, date, hour, minute, second]    
         global timeUpdated
         #This sets up the RTC
         '''The 8-tuple has the following format:
@@ -122,5 +124,35 @@ class RTCManager():
 
         # return boolean
         return(current_time[3] == weekday and current_time[4] == hour and current_time[5] == minute)
+
+    def is_in_awake_window(self, awake_window, now=None):
+    #     def is_in_awake_window(self, start_hour, start_minute, end_hour, end_minute, now=None):
+        """
+        Returns True if the current time falls inside the awake window.
+        Handles windows that cross midnight.
         
-        
+        :param awake_window dict, {"start"{"hour":int, "minute":int}:"end"{"hour":int,"minute":int}}
+        :  awake_window["start"]["hour"]	: int, start of quiet window hour (0-23)
+        :  awake_window[""start"]["minute"]	: int, start of quiet window minute (0-59)
+        :  awake_window["end"]["hour"]		: int, end of quiet window hour (0-23)
+        :  awake_window["end"]["minute"]	: int, end of quiet window minute (0-59)
+        :param now: optional tuple (hour, minute) for testing
+        """
+        if now is None:
+            t = time.localtime()
+            now = (t[3], t[4])
+        now_hour, now_minute = now
+
+        # Convert all times to minutes since midnight
+        start = awake_window["start"]["hour"] * 60 + awake_window["start"]["minute"]
+        end   = awake_window["end"]["hour"] * 60 + awake_window["end"]["minute"]
+        now_mins = now_hour * 60 + now_minute
+
+        if start < end:
+            # Simple case: window within the same day
+            return start <= now_mins < end
+        else:
+            # Cross-midnight case: e.g., 22:00 → 06:00
+            return now_mins >= start or now_mins < end
+
+       

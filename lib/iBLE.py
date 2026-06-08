@@ -27,7 +27,6 @@ _UART_SERVICE = (
 
 class BLESimplePeripheral:
     def __init__(self, ble, led_pin, name="Motion"):
-#    def __init__(self, ble, name="JMD_Motion"):
         self._ble = ble
         self._ble.active(True)
         self._ble.irq(self._irq)
@@ -37,7 +36,8 @@ class BLESimplePeripheral:
         self.led.off() #Make sure it starts in the off state
         self._write_callback = None
         self._payload = advertising_payload(name=name, services=[_UART_UUID])
-        self._advertise()
+# Don't need to advertise when intitalizing the class
+#        self._advertise()
 
     def _irq(self, event, data):
         # Track connections so we can send notifications.
@@ -49,36 +49,48 @@ class BLESimplePeripheral:
         elif event == _IRQ_CENTRAL_DISCONNECT:
             conn_handle, _, _ = data
             print("Disconnected", conn_handle)
-            self.led.off()
             self._connections.remove(conn_handle)
+            if len(self._connections) == 0: self.led.off()
             # Start advertising again to allow a new connection.
-            self._advertise()
+            # Advertising is now handled outside the class
+            #self._advertise()
         elif event == _IRQ_GATTS_WRITE:
             conn_handle, value_handle = data
             value = self._ble.gatts_read(value_handle)
             if value_handle == self._handle_rx and self._write_callback:
                 self._write_callback(value)
 
-    def send(self, data):
-        for conn_handle in self._connections:
-            self._ble.gatts_notify(conn_handle, self._handle_tx, str(len(data)))
-            txList = []
-            #Need to send to send Data in short (20 characters) strings
-            txList  = [data[i:i + 20] for i in range(0, len(data), 20)]
-            for sendStr in txList:
-                self._ble.gatts_notify(conn_handle, self._handle_tx, sendStr)
-
-    def is_connected(self):
-        return len(self._connections) > 0
-
-    def _advertise(self, interval_us=500000):
+    def advertise(self, interval_us=500000):
         print("Starting advertising")
         self._ble.gap_advertise(interval_us, adv_data=self._payload)
 
-    def _un_advertise(self):
+    def un_advertise(self):
         print("Stopping advertising")
-        self._ble.gap_advertise()
+        self._ble.gap_advertise(None)
 
+    def send(self, data):
+        # Convert string to bytes automatically if needed
+        if isinstance(data, str):
+            data = data.encode('utf-8')
+            
+        for conn_handle in self._connections:
+            # Send the total payload length as a string header first
+            self._ble.gatts_notify(conn_handle, self._handle_tx, str(len(data)))
+            
+            # Slice and transmit the raw bytes in 20-byte chunks
+            for i in range(0, len(data), 20):
+                chunk = data[i:i + 20]
+                self._ble.gatts_notify(conn_handle, self._handle_tx, chunk)
+    
+    def is_connected(self):
+        return len(self._connections) > 0
+
+    def led_control(self, mode):
+        if mode == "toggle": self.led.toggle()
+        elif mode == "on": self.led.on()
+        elif mode == "off": self.led.off()
+        
+        
     def on_write(self, callback):
         self._write_callback = callback
 

@@ -1,71 +1,21 @@
+''' Motion Detector Firmware
+11/02/2025 - Start of complete re-write
+                This code will be based on a Miro flow diagram
+                https://miro.com/app/board/uXjVJDQWxEE=/
+            Of course copying libraries and functions where it makes sense.
 '''
-Motion Detector by Just Me Designs (JMD)
-    This project is to create a motion detector which can send email messages to configured addresses in the event that no motion is detected after
-     a configured time.
-    It is meant to monitor that a person is actively moving in their environment, and alert loved ones if it appears they might have become unable to move
-    It should be placed in a location that cannot detect a person if they have fallen in range of the detector,
-     and could trigger it with arm movements or something like that.  The recommendation would be to plug it into a counter outlet in the kitchen area.
-     The counter would block the detector from detecting the person on the floor even directly below the sensor.
-    
-    Two sets of email addresses can be configured
-        A. Monitor email.  These addresses will receive an email daily to let the users know that the monitor is still operating.
-        B. Alert email.  These addresses should be connfigured to generate text messages to the loved ones and will be sent when
-           the configured timeout has occurred.  Most wireless carriers provide a special email address that will immediately send
-           a test message to the subscriber.  For T-Mobile the address would look like this '6035983717@tmomail.net'
-    
-    2024/12/26 - Eliminate multi-threaded operation.
-        Coding has been going on for a while, and I was trying to get the detecting code to run in a separate thread so that
-        other things could be done in the main thread.  I came to the realization that there is nothing else that might need
-        to be done once the device is configured.  Therefore I've decided to make a rather significant change to the code, and
-        set it up to allow BlueTooth copnnections in the first 30 seconds after power on in order to allow for configuration,
-        then enter into the monitor state, from which the only end is to remove power.
-    
-    2025/01/14 - Major restructure to clean up the code, and allow download of log files via bluetooth.
-        Bluetooth connections are now allowed at any time.
-        I might also provide for firmware updates over bluetooth. (This presents the problem of what to do if the update breaks the device.)
-        
-    2025/02/08 - Major development is complete.  Started work on making the code more robust especially with regards to internet connection stuff.
-    
-    2025/03/19 - added code to track and indicate firmware revision. Version 1.00
-    
-    2025/03/25 - Version 1.01
-                 Fix time update code so it only fetches time ONCE a week from the internet.  Previous version repeated fetch several times.
-                 
-    2025/03/29 - Version 1.02
-                 Changed order of log file archives so that log_1.txt is most recent, and log_5.txt is oldest
-    
-    2025/04/02 - Version 1.03
-                 Added TST bluetooth command to test email and text messaging to make sure it's configured correctly.
-        
-    2025/04/17 - Version 1.04
-                    Made a change so that if the internet connection fails the device wuill retry every 5 minutes
-                    To support this I moved the creastion of the internet class to a separate definition
-                    Main code changes made around line #374, the original code was replaced with a call to this new def around line #327
-                    That code is around line #260
-    
-    2025/04/21 - Version 1.05
-                    Discovered that the update function needs work.  Also want to add a way to get the current version when connected using the app.
-                    
-    2025/05/13 - Version 1.06
-                    Noticed that when internet connection doesn't work, and time gets set to 2000, it needs to retry every so often,  I'm thinking every 15 minutes?
-                    Also noticed that weekly time update is happening on Monday when it was supposed to be on Sunday
-                    
-    2025/06/08 - Version 1.07
-                    Trying to add enough log file debug messages to help get this working next time I get a chance to try it at Dad's house.
-                    2025/07/27 - confirmed working, but text messages aren't being sent.
-    
-    2025/07/28 - Version 1.08
-                    T-Mobile decided to stop supporting the email to SMS gateway.
-                    Need to come up with a long term solution, but for now.....
-                    Changed sending alerts from text to email on alert, and alert cancelled.
-                    
-'''
+
+# Includes
 from iClk import RTCManager
+from iNet import InternetTimeoutError
 from iNet import InternetManager
 from iBLE import BLESimplePeripheral
 from iCFG import ConfigManager
-from iEmail import EmailSender
 from iLogFile import LogManager
+from umqtt_simple import MQTTClient
+import secure_config
+
+from umqtt_simple import MQTTException
 
 import machine
 import bluetooth
@@ -74,10 +24,141 @@ import sys
 import os
 import ujson as json
 import gc
+import urequests
 
-import secrets
+'''
+# Variable Definition
+'''
+FW_REV = 2.01
+rtc_value = [2000,2,3,8,35,0] # My birthday in the year 2000 (RP2 didn't like 1959!)
 
-FW_REV = 1.08
+# Class variables
+internet_manager = None
+ble_manager = None
+log_file = None
+myConfig = None
+
+#Bluetooth global variables
+rxData = []
+payload_len = 0
+myData = ""
+myDataStruct = ""
+
+# 1. Define your secure, secret ntfy URL
+NTFY_URL = "https://ntfy.sh/jmd_1000_safety_alert_4784"
+
+
+#MQTT Variables
+client = None
+mqtt_server = 'broker.emqx.io'
+#client_id = 'devices/JMD_1000'
+client_id = 'JMD_1000'
+#MQTT Topics
+topics = {
+    # ----------------------------------------------------
+    # STATE + ALERT OUTPUT
+    # ----------------------------------------------------
+    "topic_motion"         : f"{client_id}/state/motion".encode(),
+    "topic_last_motion"    : f"{client_id}/state/last_motion".encode(),
+    "topic_alert"          : f"{client_id}/alert/inactivity".encode(),
+    "topic_test_alert"     : f"{client_id}/alert/test".encode(),
+    "topic_time"           : f"{client_id}/state/time".encode(),
+    "topic_awake"          : f"{client_id}/state/awake".encode(),
+    "topic_version"        : f"{client_id}/state/version".encode(),
+    
+    # ----------------------------------------------------
+    # CONFIG PUBLISHING
+    # ----------------------------------------------------
+    "topic_cfg_full"       : f"{client_id}/config/full".encode(),
+
+    # ----------------------------------------------------
+    # COMMANDS (phones → device)
+    # ----------------------------------------------------
+    "topic_set_config"       : f"{client_id}/command/set_config".encode(),
+    "topic_test_cmd"         : f"{client_id}/command/test_alert".encode(),
+    "topic_reboot"           : f"{client_id}/command/reboot".encode(),
+    "topic_sync_time"        : f"{client_id}/command/sync_time".encode(),
+    "topic_cfg_get"          : f"{client_id}/command/get_config".encode(),
+
+    # ----------------------------------------------------
+    # RESPONSES (device → phones)
+    # ----------------------------------------------------
+    "topic_ack"            : f"{client_id}/response/ack".encode(),
+    "topic_err"            : f"{client_id}/response/error".encode(),
+    "topic_log"            : f"{client_id}/response/log".encode(),
+
+    # ----------------------------------------------------
+    # WILDCARD SUBSCRIPTIONS
+    # ----------------------------------------------------
+    "topic_cmd_all"        : f"{client_id}/command/#".encode(),
+}
+
+# ----------------------------------------------------
+# MQTT HANDLER FUNCTIONS
+# ----------------------------------------------------
+
+#This appears to be working, just be careful with JSON string formation.
+def handle_set_config(msg_str):
+    print(f"Config JSON: {msg_str}")
+    try:
+        update = json.loads(msg_str)
+
+        # Deep merge helper
+        def merge_dict(base, new):
+            for key, value in new.items():
+                if isinstance(value, dict) and isinstance(base.get(key), dict):
+                    merge_dict(base[key], value)
+                else:
+                    base[key] = value
+
+        merge_dict(myConfig.config, update)
+        myConfig.save_config()
+
+        client.publish(topics["topic_ack"], b"OK: config updated")
+    except Exception as e:
+        client.publish(topics["topic_err"], f"ERR: {e}".encode())
+
+#This seems to be working. (I think I saw the alert go back to CLEAR once)
+def handle_test_alert(msg_str):
+    client.publish(topics["topic_alert"], b"TEST")
+    client.publish(topics["topic_ack"], b"OK: test alert sent")
+    send_inactivity_alert("Alert Testing Requested.")
+    
+
+#This seems to be working
+def handle_reboot(msg_str):
+    client.publish(topics["topic_ack"], b"OK: rebooting")
+    time.sleep(1)
+    machine.reset()
+
+
+#This would require the phone to send the current timestamp
+def handle_sync_time(msg_str):
+    try:
+        update = json.loads(msg_str)
+        rtc_manager.set_time(update["epoch"])
+        client.publish(topics["topic_ack"], b"OK: time synced")
+    except Exception:
+        client.publish(topics["topic_err"], b"ERR: time sync failed")
+
+
+#This seems to be working
+def handle_cfg_get(msg_str):
+    cfg_json = myConfig.get_config()
+    client.publish(topics["topic_cfg_full"], cfg_json.encode())
+
+
+# ----------------------------------------------------
+# COMMAND DISPATCHER
+# ----------------------------------------------------
+command_handlers = {
+    topics["topic_set_config"]: handle_set_config,
+    topics["topic_test_cmd"]: handle_test_alert,
+    topics["topic_reboot"]: handle_reboot,
+    topics["topic_sync_time"]: handle_sync_time,
+    topics["topic_cfg_get"]: handle_cfg_get,
+}
+
 
 # Define the pins and names for the LEDs
 leds = {
@@ -88,22 +169,87 @@ leds = {
     "Working": machine.Pin(9, machine.Pin.OUT)
 }
 
-#Get stuff from the secrets file.
-api_key = secrets.dateTime['API_KEY']
-host = secrets.dateTime['host']
+#Start by assuming no motion or alert
+detector_state = alert_state = False
+#Make sure there's no motion or alert flags set.
+motion_flag = alert_flag = False
+alert_condition = False
 
-#Bluetooth global variables
-rxData = []
-payload_len = 0
-myData = ""
-myDataStruct = ""
+#This is loaded from an encrypted file.
+secrets = secure_config.load_config("secrets.enc") # E-mail and geo-location creds.
 
-# Class variables
-email_sender = None
-internet_manager = None
-log_file = None
-myConfig = None
-ble_manager = None
+'''
+# Functions
+'''
+
+
+def send_inactivity_alert(message_text):
+    """
+    Sends a high-priority push notification directly to your phone 
+    when the 8-hour inactivity threshold is crossed.
+    """
+    
+    # 2. Set up the headers to format the notification on your phone
+    headers = {
+        "Title": "🚨 DAD'S HOUSE ALERT 🚨",
+        "Priority": "high",       # 'high' or '5' ensures it stands out on your phone
+        "Tags": "warning,house",   # Adds a warning emoji and house emoji automatically
+    }
+    
+    # 3. Define the message payload text
+#    message_text = f"No motion has been detected at Dad's house for {quiet_time} hours. Please check in."
+    
+    try:
+        # Send the POST request to the ntfy cloud server
+        response = urequests.post(NTFY_URL, data=message_text, headers=headers)
+        
+        # MicroPython Best Practice: Always check status and close socket connections!
+        if response.status_code == 200:
+            print("Push notification delivered to ntfy.sh successfully.")
+        else:
+            print(f"Server responded with an error code: {response.status_code}")
+            
+        response.close() 
+        
+    except Exception as e:
+        # Catches network timeouts, temporary Wi-Fi drops, etc.
+        print(f"Failed to transmit push notification: {e}")
+        
+def get_dict_value(base_dicts: dict, path: str):
+    top = None
+    if not path:# or "['" not in path:
+        return None
+    elif "['" not in path:
+        top = path
+    else:
+        # Extract top-level name before the first [
+        top = path.split("[", 1)[0]
+
+    if top not in base_dicts:
+        return None
+
+    value = base_dicts[top]
+
+    # Extract everything between [' and ']
+    parts = []
+    start = 0
+    while True:
+        i = path.find("['", start)
+        if i == -1:
+            break
+        j = path.find("']", i)
+        if j == -1:
+            break
+        key = path[i+2:j]
+        parts.append(key)
+        start = j + 2
+
+    for k in parts:
+        try:
+            value = value[k]
+        except (KeyError, TypeError):
+            return None
+    return value
 
 def on_rx(v): #This is a bluetooth callback to handle incoming data
     global payload_len
@@ -120,41 +266,22 @@ def on_rx(v): #This is a bluetooth callback to handle incoming data
         myData = ""
     else:
          rxData.append(v)
+         print(rxData)
 
-def panic_leds(sweepCount = 3):
-    myList = ["Working",
-#         "WIFI",
-#         "BlueTooth",
-        "Motion",
-        "ALERT"
-        ]
-    #Start with all LEDS off
-    for name in myList: leds[name].off()
-
-    for i in range(sweepCount):
-        #Then turn them on one at a time in sequence
-        for name in myList:
-            #print(name)
-            leds[name].on()  # Turn the LED off
-            time.sleep(.1)
-            leds[name].off()
-        for name in reversed(myList):
-            #print(name)
-            leds[name].on()  # Turn the LED off
-            time.sleep(.1)
-            leds[name].off()
-        #time.sleep(.25)
-
+#Only call this if you detect a BT connection,
+# it will run until the connection is closed
 def check_bt():
+    #The class handles the bluetooth LED
     global payload_len
     global rxData
     global myData
-    global leds
     global log_file
-    global myConfig
     global ble_manager
     global FW_REV
-
+    global leds
+    global WiFi_Creds
+    
+    working_led = leds["Working"]
     
     payloadReceived = False
     blink_interval = 250 #In milliseconds
@@ -167,7 +294,7 @@ def check_bt():
         #Check if it's time to toggle the LED
         if time.ticks_diff(current_time, last_blink_time) >= blink_interval:
             #Toggle the LED
-            leds["Working"].toggle()
+            working_led.toggle()
             #Update the last blink time.
             last_blink_time = current_time
 
@@ -190,26 +317,32 @@ def check_bt():
             payloadReceived = False #Make sure I only do this once per payload
             
             if msgType =="PUT":
-                #I have all the data in a JSON string called msgText
-                if myConfig.filename in os.listdir():
-                    # Open the file in read mode
-                    with open(myConfig.filename, 'w') as file:
-                        file.write(msgText)
-                #Now that the file was updated, reload the configuration
-                myConfig.load_config()
-                log_file.info("Configuration updated.")
-                machine.reset()
+                #respond by saving SSID and Password (encrypted)
+                #msgText will contain the JSON string for the ssid and password
+                #First put the values in the internet manager class
+
+                # Convert JSON to Python dictionary
+                WiFi_Creds = json.loads(msgText)
+
+                # Dynamically set attributes based on JSON keys
+                for key, value in WiFi_Creds.items():
+                    setattr(internet_manager, key, value)
+                    
+                #Need to save this stuff to the encrypted file.
+                #def save_config(filename: str, config: dict):
+                secure_config.save_config("wifi.enc", WiFi_Creds)
+                
+                #Log this activity to the log file.
+                log_file.info("WiFi Credentials updated.")
                 
             elif msgType == "GET":
-                #Respond by sending the configuration file (config.txt)
-                #The filename should be gotten from the cig manager class myConfig.filenam
+                #Respond by sending the SSID and Password which are in a dict called WiFi_Creds
                 log_file.info("Configuration requested.")
-                if myConfig.filename in os.listdir():
-                    # Open the file in read mode
-                    with open(myConfig.filename, 'r') as file:
-                        # send the entire content of the file over bluetooth
-                        tmpStr = file.read()
-                        ble_manager.send(''.join(["GET",tmpStr]))
+                # send the WiFi credentials
+                # internet_manager_dict = {"ssid": internet_manager.ssid, "password": internet_manager.password}
+                # print(internet_manager_dict)
+                # WAS - ble_manager.send(''.join(["GET",json.dumps(internet_manager_dict)]))
+                ble_manager.send(''.join(["GET",json.dumps(WiFi_Creds)]))
 
             elif msgType == "DIR":
                 #Respond with list of log files.
@@ -232,258 +365,355 @@ def check_bt():
                     tmpStr = f"Log file {msgText} sent."
                     log_file.info(tmpStr)
                     
-            elif msgType == "UPD":
-                #This is a mechanism for firmware updates
-                '''
-                The message text starts with the target file path
-                then separated by a comma the rest of the file text.
-                '''
-                file_path, file_data = msgText.split(",", 1) #Split on ONLY the first comma
-                temp_file_path = file_path + ".tmp"
-                
-                # The transfer worked. Save file_data to file_path
-                print(f"Saving file: {temp_file_path}")
-                log_file.debug(f"Saving file: {temp_file_path}")
-
-                with open(temp_file_path, 'w') as file:
-                    # Write the string data to the file
-                    file.write(file_data)
-                log_file.info("Update to file " + file_path + " received.")
-#                os.remove(file_path) #Remove the old file
-#                os.rename(temp_file_path, file_path) #Rename the temporary file.
-                log_file.info("Firmware update ready.")
-                #Send a response to let the user know I'm done
-                print(f"File: {temp_file_path} written.")
-                log_file.debug(f"File: {temp_file_path} written.")
-                ble_manager.send(''.join(["UPD","File updated."]))
-                
             elif msgType == "RST":
                 machine.reset()
                 
-            elif msgType == "TST":
-                #Send test messages to the identified group
-                # Destination ends up in msgText
-                sendAlert("Test","This is a test message from the JMD Motion detector.",msgText)
-            
-            elif msgType == "VER":
-                #Return the firmware version
-                ble_manager.send(f"VER{FW_REV}")
-                print(f"Version: {FW_REV} sent.")
-                log_file.debug(f"Version: {FW_REV} sent.")
-                        
-            print("Payload processed")
-            log_file.debug("Payload processed.")
-                
-def sendAlert(subject, message_text, destination):
-    global email_sender
-    global internet_manager
+def termMsg(topic, message_text):
+    #These are now going to the MQTT broker
+    global client
     global log_file
-    global myConfig
+#    global myConfig
 
-    destination = myConfig.config[destination]
+    print(message_text)
+    #Need to add code to send alerts to the MQTT broker
+    if client != None:
+        try:
+            if isinstance(message_text, str):
+                message_text = message_text.encode()
 
-    try:
-        internet_manager.connect()
-        email_sender.send_email(subject, message_text, destination)
-    except Exception as e: # Print the error message
-        print("An error occurred:", e)
-        log_file.error(e)
-        #Make the LED's do something noticable.
-        panic_leds(sweepCount = 3)
-    finally:
-        internet_manager.disconnect()
-    log_file.alert(message_text)
+            client.publish(topic, message_text)
+        except SystemExit as e:
+            print(f"Trouble publishing: {message_text} to {topic}")
+            log_file.error(f"Trouble publishing: {message_text} to {topic}")
 
-def CreateInternetClass(config_info, WIFI_led, log_file_class):
-#     global myConfig
-#     global led_pins
-#     global log_file
-    global rtc_init
+def init_RTC(secrets):
+    #Expects that internet is connected.
     global internet_manager
     
-    #Create an instance of InternetManager
-    try:
-        internet_manager = InternetManager(config_info.config["wifi_ssid"], config_info.config["wifi_password"], WIFI_led)
-    # Need to handle the case where that didn't work as expected.
-    except SystemExit as e:
-        print("No internet connection")
-        log_file.error("No internet connection.")
-        rtc_init = [2000,2,3,8,35,0] # My birthday in the year 2000 (RP2 didn't like 1959!)
-    else:
-        #Getting time from internet returns a time adjusted for time zone and daylight savings.
-        print(f"Getting time (main) from{secrets.dateTime["host"]}.")
-        log_file.debug(f"Getting time (main) from{secrets.dateTime["host"]}.")
-        rtc_init = internet_manager.time_from_internet(secrets.dateTime["host"], secrets.dateTime["API_KEY"])
-
-
-def main():
-    global email_sender
-    global internet_manager
-    global log_file
-    global myConfig
+    #Getting time from internet returns a time adjusted for time zone and daylight savings.
+    #If there's not internet connection the return value will be my birthday in the year 2000
+    termMsg(topics["topic_log"], f"Getting time (main) from{secrets['dateTime']['host']}.")
+    log_file.debug(f"Getting time (main) from{secrets['dateTime']['host']}.")
+    #time_from_internet might raise an error, but I dont really care since it will return a flag value
+    rtc_manager.setRTC(internet_manager.time_from_internet(secrets["dateTime"]["host"], secrets["dateTime"]["API_KEY"]))
+        
+    return #No value is returned, but the RTC value (inside that class) will be updated.
+ 
+def allow_bt(ble_interval = 15):
     global ble_manager
-    global FW_REV
+    #Wait a while for a bluetooth connection.
+    ble_manager.advertise(interval_us = ble_interval * 1000)
+    bleStartTime = time.time()
+    while time.time() - bleStartTime < ble_interval: #We'll have to see if I like <ble_interval> seconds or not.
+        #Bluetooth LED is handled by the class, and turns on when a connection is made
+        #If there's a connection take care of it
+        if ble_manager.is_connected():
+            check_bt()
+        else:
+            time.sleep(0.25)
+            ble_manager.led_control("toggle")
+    # If we got here the timer is done, make sure led is off
+    ble_manager.led_control("off")
+
+def mqtt_callback(topic, msg):
+    try:
+        msg_str = msg.decode()
+    except:
+        print("MQTT decode error")
+        return
+
+    handler = command_handlers.get(topic)
+
+    if handler:
+        handler(msg_str)
+    else:
+        print("Unknown topic:", topic)
+        client.publish(topics["topic_err"], b"ERR: unknown topic")
+                   
+import time
+import sys
+
+# Assuming you are using umqtt.simple or umqtt.robust
+# If your library has a specific MQTTException, import it:
+# from umqtt.simple import MQTTException 
+
+def connect_mqtt(retries=5, delay=2):
+    client = MQTTClient(
+        client_id, 
+        mqtt_server, 
+        user='PicoMan', 
+        password='Pico2Stuff', 
+        port=1883, 
+        ssl=False, 
+        keepalive=60
+    )
     
-    print(f"Firmware revision {FW_REV}")
-
-    '''
-    ################################
-    Hardware setup
-    ################################
-    '''
-    #Set up the motion detector
-    motion_detector_pin = machine.Pin(1, machine.Pin.IN, machine.Pin.PULL_DOWN)
-
-    #Make sure all LEDs start in the off state
-    for name, led in leds.items(): led.off()
+    client.set_callback(mqtt_callback)
     
-    #Turn on status LED to indicate power (for now)
-    leds["Working"].on()
-    '''
-    ################################
-    Software Class setup
-    ################################
-    '''
-    myConfig = ConfigManager()
-    ''' Configuration needs to be loaded here because 
-        other class setup calls require information
-        from the configuration file.
-    '''
-    myConfig.load_config() # If the file doesn't exist, the default data is written
+    for attempt in range(1, retries + 1):
+        try:
+            print(f"Connecting to MQTT broker (Attempt {attempt}/{retries})...")
+            # Some micro-libraries return a status code (0 = success)
+            res = client.connect(timeout=5)
+            
+            if res == 0 or res is None: 
+                print(f'Successfully connected to {mqtt_server} as {client_id}')
+                return client
+            else:
+                print(f"Broker rejected connection with code: {res}")
+                
+        except OSError as e:
+            # Catches network errors, connection timeouts, and unreachable hosts
+            print(f"Network error during connection: {e}")
+        except Exception as e:
+            # Catches other unexpected errors without blocking KeyboardInterrupt
+            print(f"Unexpected error: {e}")
+            
+        if attempt < retries:
+            print(f"Retrying in {delay} seconds...")
+            time.sleep(delay)
+            
+    # If we exhaust all retries, handle the failure explicitly
+    print("Failed to connect to MQTT broker after multiple attempts.")
+    return None
 
-    # Set up to log information
-    '''
-        Supports 4 types of messages in this order
-            log_file.debug(message)
-            log_file.info(message)
-            log_file.alert(message)
-            log_file.error(message)
-    '''
-    log_file = LogManager(level=myConfig.config["logLevel"], max_size=8192) # DEBUG is minimum level to log info
-    #This can't be earlier because the logging hasn't been set up
-    log_file.debug(f"Firmware Rev:{FW_REV}")
+# def connect_mqtt():
+#     client = MQTTClient(client_id, mqtt_server, user='PicoMan', password='Pico2Stuff', port=1883, ssl=False, keepalive = 60)
+# 
+#     client.set_callback(mqtt_callback)
+#     try:
+#         client.connect(timeout = 5)
+#     except:
+#         print("MQTT Connection timed out!")
+#     else:
+#         print(f'Connected to {client_id}')
+#     return client
 
-    #Create an instance of InternetManager
-    CreateInternetClass(myConfig, leds["WIFI"], log_file)
-
-    rtc_manager = RTCManager(rtc_init)# Internet class will return my birthday in 2000 if unable to connect
-    print(f"Current local time: {rtc_manager.get_formatted_time()}")
-    log_file.debug(f"Current local time: {rtc_manager.get_formatted_time()}")
-
-    sensorStartupTime = time.time() + 10 # should be 60
-
-    #Initialize Email sender
-    email_sender = EmailSender("smtp.gmail.com", 465, secrets.eMail['address'], secrets.eMail['key'])
+def publish_time():
+    global client
+    global topics
     
-    # Set up Bluetooth Low Energy for initial configuration:
-    ble = bluetooth.BLE()
-    ble_manager = BLESimplePeripheral(ble, led_pin=leds["BlueTooth"]) #This init starts advertising
-     
-    ble_manager.on_write(on_rx)
+    # Get the current Unix timestamp
+    current_seconds = time.time()
 
-    #Send start up email notification
-    log_file.info(f"Detector started. Firmware: {FW_REV}.")
+    # Convert to a local time tuple
+    # The tuple contains: (year, month, mday, hour, minute, second, weekday, yearday)
+    time_tuple = time.localtime(current_seconds)
 
-    # First test if internet_manager was intitalized.
-    if internet_manager != None:
-        #If internet_manager was intialized, send an email indicating startup.
-        strTime = rtc_manager.seconds_to_time(time.time())
-        strBody = f"At {strTime} The motion detector was started at {myConfig.config["location"]} running firmware revision {FW_REV}."
-        sendAlert("Motion detector started",strBody, "email_addresses")
+    # Extract individual components for easier formatting
+    year, month, day, hour, minute, second, weekday, yearday = time_tuple
+
+    # Convert to a local time tuple
+    # The tuple contains: (year, month, mday, hour, minute, second, weekday, yearday)
+    time_tuple = time.localtime(current_seconds)
+    # Example 1: Basic YYYY-MM-DD HH:MM:SS format
+    formatted_time_basic = "{:02d}:{:02d}:{:02d}".format(hour, minute, second)
     
-    #Start by assuming I'm done sleeping and there's motion just stopped.
-    sleep_until = motion_stopped = time.time()  # This will force no sleep at startup
-    # Interval time and alert time should be in seconds at this level.
-    tempStr = f"Interval: {myConfig.config["interval_time"]}, Alert: {myConfig.config["alert_time"]}"
-    print(tempStr)
-    log_file.info(tempStr)
-    m_flag = a_flag = False
+    termMsg(topics["topic_time"], f"publishing: {formatted_time_basic} to {topics['topic_time']}")
+    # 1. Get the True/False value for awake state and convert it to text
+    awake_payload = str(rtc_manager.is_in_awake_window(myConfig.config["awake_window"]))
 
-    #The motion sensor is documented to take 1 minute to start up
-    print("Waiting for sensor to warm up.")
-    while time.time() < sensorStartupTime:
-        panic_leds(sweepCount = 1)
+    try:
+        client.publish(topics["topic_time"], formatted_time_basic.encode())
+        client.publish(topics["topic_awake"], awake_payload)
+    except:
+        #If publishing didn't work, try disconnect, and re-connect
+        client.disconnect()
+        client = connect_mqtt()
 
-    while True: #This is the endless loop that does the actual monitoring.
-        time.sleep(1) #Every one second...
-        
-        #If initializing the internet class failed, blink the WIFI LED
-        if internet_manager == None:
-            leds["WIFI"].toggle()
-            leds["Working"].toggle()
-            # If the minute counter MOD 5 == 0, try to get the time again
-            # This is in case the router was not operational the last time we tried to get the time.
-            if rtc_manager.get_time_part('minute') % 5 == 0 and rtc_manager.get_time_part("second") == 0:
-                CreateInternetClass(myConfig, leds["WIFI"], log_file)
-                rtc_manager = RTCManager(rtc_init)# Internet class will return my birthday in 2000 if unable to connect
-        elif time.time() % 2 == 0:
-            #Toggle the working indicator once every 2 seconds
-            leds["Working"].toggle()
+
+
+'''
+# INIT Classes
+#   Configuration manager
+#   Log File manager
+#   Internet manager
+#   Real Time Clock (RTC) manager (requires internet)
+#   Bluetooth handler
+'''
+#   Configuration manager
+myConfig = ConfigManager()
+''' Configuration needs to be loaded first because... 
+    other class setup calls require information
+    from the configuration file.
+'''
+myConfig.load_config() # If the file doesn't exist, the default data is written
+
+#   Log File manager
+# Set up to log information
+'''
+Supports 4 types of messages in this order
+        log_file.debug(message)
+        log_file.info(message)
+        log_file.alert(message)
+        log_file.error(message)
+'''
+log_file = LogManager(level=myConfig.config["log_level"], max_size=2048)
+
+#   Internet manager
+#Get wifi connection info from encrypted file.
+#It's a dictionary with two entries: ssid, and password
+WiFi_Creds = secure_config.load_config("wifi.enc")
+internet_manager = InternetManager(WiFi_Creds["ssid"], WiFi_Creds["password"], leds["WIFI"])
+#Force a disconnect in case there's a leftovcer connetcion
+internet_manager.disconnect()
+
+#   Real Time Clock (RTC) manager (requires internet)
+rtc_manager = RTCManager()
     
-        detector_state = motion_detector_pin.value()	# Check Motion detector
-        leds["Motion"].value(detector_state)
+#   Bluetooth handler
+ble_manager = BLESimplePeripheral(bluetooth.BLE(), led_pin=leds["BlueTooth"], name="Motion")
+# Define the call back routine for incoming data.
+ble_manager.on_write(on_rx)
 
-        check_bt() #See if a bluetooth connection was made.
-        
-        #Get time from internet every Sunday at 2:01 AM, in case Daylight Savings changed.
-        #Apparently weekday 0 = Monday.  Changed this from 0 to 6.
+
+'''
+# Hardware INIT
+'''
+
+#Set up the motion detector
+motion_detector_pin = machine.Pin(1, machine.Pin.IN, machine.Pin.PULL_DOWN)
+
+#Make sure all LEDs start in the off state
+for name, led in leds.items(): led.off()
+
+'''
+# Main code
+'''
+# Turn on Working LED
+leds["Working"].on()
+
+#Allow for a bluetooth connection for 15 seconds
+allow_bt(ble_interval = 15)
+#Connect to internet and MQTT broker
+while True: #This acts like a repeat / until loop
+    #repeat
+    try:
+        internet_manager.connect() #See if internet is connected
+    except InternetTimeoutError:
+        allow_bt(ble_interval = 15) #Otherwise, allow bluetooth connection (potentially modifying wifi creds)
+        continue #Which will try to connect again
+    else: #Connection must have worked so... Connect to the MQTT Broker
+        while True:
+            try:
+                client = connect_mqtt() #Might raise MQTTException
+            except MQTTException as e:
+                #TODO: need to figure out what else goes here
+                print("Couldn't connect to MQTT Broker.")
+                #Log inability to connect to MQTT
+                log_file.error(f"Unable to start MQTT.")
+                if internet_manager.is_connected():
+                    time.sleep(2)
+                    continue
+                else:
+                    break
+            else:
+                client.publish(topics["topic_log"], b'Hello from JMD_1000!')
+                
+                # Send the firmware version immediately on boot/reconnect and retain it
+                client.publish(topics["topic_version"], f"{FW_REV}".encode(), retain=True, qos=1)
+                
+                #Make sure we start by clearing any alerts
+                client.publish(topics["topic_alert"], b"CLEAR", retain=False, qos=0)
+                client.subscribe(topics["topic_cmd_all"])
+                break
+        break
+
+#Send start up notification
+log_file.info(f"Detector started. Firmware: {FW_REV}.")
+
+#Enter the main endless while loop
+while True:
+    #Get the location specific time from the internet
+    #Set up the real time clock (RTC)
+    init_RTC(secrets) #Gets local time from the internet, requires internet connection
+    termMsg(topics["topic_log"], f"Time updated from Internet at {rtc_manager.get_formatted_time()}.")
+    #Start by assuming I just saw motion
+
+    if rtc_manager.get_time_part("year") == 2000: #getting time from internet failed.
+        termMsg("Getting time from internet failed. Waiting 1 minute")
+        time.sleep(60)  #Wait for 1 minute
+        continue        #Try again
+
+    #First sub-loop
+    while True: #Get time from internet every Sunday at 2:01 AM, in case Daylight Savings changed.
+        #Apparently weekday 0 = Monday, therefore Sunday is 6.
+        #The AND part should prevent updating more than once a day
+        #When for example the clocks go back to standard time
         SundayMorning = rtc_manager.check_time(6,2,1) and rtc_manager.time_Updated[2] != rtc_manager.get_time_part("date")
         #This is here in case the most recent update returned the year 2000 which indicates internet connection didn't work.
         NeedUpdate = rtc_manager.get_time_part("year") == 2000 and rtc_manager.get_time_part("minute") % 15 == 0 and rtc_manager.get_time_part("second") % 60 == 0
         
         if SundayMorning or NeedUpdate:
-            rtc_manager.setDateTime(internet_manager.time_from_internet(secrets.dateTime["host"], secrets.dateTime["API_KEY"]))
-            #This should send a weekly email indicating time was updated
-            sendAlert("Time updated", f"Time updated from Internet at {rtc_manager.get_formatted_time()}.", 'email_addresses')
-
-    
-        #If I'm done sleeping, decide what to do based on the motion detector
-        if time.time() >= sleep_until: # If I'm done sleeping...
-            # If motion was detected, stop checking for the interval time.
-            if detector_state == 1:
-                sleep_until = time.time() + myConfig.config["interval_time"]
-                #Assume motion stops right away
-                motion_stopped = time.time()
-#                print("Sleeping until ",rtc_manager.seconds_to_time(sleep_until))
-#                log_file.debug(f"Motion detected, sleeping until {rtc_manager.seconds_to_time(sleep_until)}")
-
-            if detector_state == 0 and m_flag == True: # Motion stopped
-                motion_stopped = time.time()
-#                print(f"Motion stopped at {rtc_manager.seconds_to_time(motion_stopped)}")
-#                log_file.debug(f"Motion stopped at {rtc_manager.seconds_to_time(motion_stopped)}")
+            break #Exits current loop and causes parent loop to go to next iteration. Which starts by getting the time.
             
-            if detector_state == 1 and a_flag == True: # Motion detected but alert was previously sent
-                # Need to send alert cancel message
-                m_flag = True
-                a_flag = False
-                leds["ALERT"].off()
-                print("ALERT cleared!")
-                log_file.info("ALERT cleared!")
-                #Send ALERT email notification
-                email_message_text = f"At {rtc_manager.seconds_to_time(time.time())} motion was detected at {myConfig.config["location"]}, alert cancelled."
-#                sendAlert("Motion ALERT CANCELLED", email_message_text, 'phone_numbers')
-                sendAlert("Motion ALERT CANCELLED", email_message_text, 'email_addresses')
-
-            #########################################
-            # DEBUG ONLY
-            #########################################
-#             if detector_state == 0 and m_flag == False:# Motion stopped
-#                 etime = time.time() - motion_stopped
-#                 print(f"No motion for {etime} seconds.")
-                
-            alert_condition = m_flag == False and time.time() - motion_stopped >= myConfig.config["alert_time"]
-            if alert_condition and a_flag == False: # no motion for at least the alert_time, Notify!
-                a_flag = True
-                leds["ALERT"].on()
-                # Need to send alert active message
-                print("ALERT Triggered!")
-                log_file.info("ALERT Triggered!")
-                #Send ALERT email notification
-                email_message_text = f"At {rtc_manager.seconds_to_time(time.time())} no motion has been detected for {myConfig.config["alert_time"] / 3600} hours at {myConfig.config["location"]}."
-#                sendAlert("Motion ALERT ISSUED!", email_message_text, 'phone_numbers')
-                sendAlert("Motion ALERT ISSUED!", email_message_text, 'email_addresses')
-
-        m_flag = detector_state #Make note of current detector state
-
+        #I can't do this earlier because I just initialized the RTC
+        motion_time = time.time()
         
-main()
+        #Second sub-loop
+        while True:
+        
+            time.sleep(1) #1 second delay
+            #Toggle the working led
+            leds["Working"].toggle()
+
+            #Check if there's any requests from the MQTT broker
+            try:
+                if client != None:
+                    client.check_msg()
+                else:
+                    print("MQTT client was None, reconnecting...")
+                    client = connect_mqtt()
+            except OSError as e:
+                print(f"Socket error detected ({e}), attempting clean MQTT reconnection...")
+                try:
+                    client.disconnect()
+                except:
+                    pass  # Socket is already dead, ignore failure to disconnect cleanly
+                time.sleep(2)
+                client = connect_mqtt()
+    
+                
+            #Send the current time (every 5 seconds) to the MQTT broker
+            if time.time() % 5 == 0: publish_time()#Only send the time every 5 seconds
+
+            detector_state = motion_detector_pin.value()	# Check Motion detector
+            leds["Motion"].value(detector_state)
+            
+            if detector_state: #True - Motion was detected.
+                motion_time = time.time() #The time when motion was last detected
+                motion_flag = True
+                alert_flag = False
+                
+                #Turn off alert (if active)
+                if alert_condition:
+                    alert_condition = False
+                    leds["ALERT"].off()
+                    # Need to send alert cancel message
+                    log_file.info("ALERT cleared!")
+                    email_message_text = f"At {rtc_manager.seconds_to_time(time.time())} motion was detected at {myConfig.config['location']}, alert cancelled."
+                    termMsg(topics["topic_log"], email_message_text)
+                    send_inactivity_alert(email_message_text)
+                    client.publish(topics["topic_alert"], b"CLEAR", retain=False, qos=0)
+                break #Return to first sub-loop
+                            
+            else: #No motion at the moment
+                quiet_time = time.time() - motion_time
+                alert_condition = (
+                    (not motion_flag)
+                    and (quiet_time >= myConfig.config["thresholds"]["inactivity_alert"])
+                    and rtc_manager.is_in_awake_window(myConfig.config["awake_window"])
+                )
+
+                if alert_condition and not alert_flag: # no motion for at least the alert_time, Notify!
+                    alert_flag = True
+                    leds["ALERT"].on()
+                    # Need to send alert active message
+                    log_file.info("ALERT Triggered!")
+                    email_message_text = f"At {rtc_manager.seconds_to_time(time.time())} no motion has been detected for {myConfig.config["thresholds"]["inactivity_alert"] / 3600} hours at {myConfig.config['location']}."
+                    termMsg(topics["topic_log"], email_message_text)
+                    send_inactivity_alert(email_message_text)
+                    client.publish(topics["topic_alert"], b"SET", retain=False, qos=0)
+            
+                motion_flag = False
+                continue #Next iteration of second sub-loop

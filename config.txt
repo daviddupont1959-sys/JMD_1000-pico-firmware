@@ -1,1 +1,1 @@
-{"alert_time":28800,"email_addresses":["david.dupont1959@gmail.com"],"interval_time":600,"location":"4700 Rolling Water Dr.","logLevel":"DEBUG","phone_numbers":["6035983717@tmomail.net"],"wifi_password":"notyournetwork","wifi_ssid":"DLD_Home"}
+{"location": "Experimental location ", "thresholds": {"inactivity_alert": 28800, "motion_interval": 32400}, "log_level": "INFO", "awake_window": {"end": {"minute": 57, "hour": 3}, "start": {"minute": 29, "hour": 6}}}

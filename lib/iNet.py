@@ -6,61 +6,94 @@ import ujson
 import machine
 import sys
 
+class InternetTimeoutError(Exception):
+    pass
 
-class InternetManager:
+class InternetNotConnected(Exception):
+    pass
     
+class InternetManager:
     def __init__(self, ssid, password, led_pin):
         self.ssid = ssid
         self.password = password
         self.wlan = network.WLAN(network.STA_IF)
         self.wlan.active(True)
-        self.connect_flag = False
+        self._wan_ip = ""
+#        self.connect_flag = False
         self.led = led_pin
         self.led.off() #Make sure it starts in the off state
         #Placehoders
         self._dateTimeURL = ""
-        #The Wide Area Network address (WAN-IP) can be used to determine time zone.
-        self._wan_ip = "172.56.93.182" #Will default to be in USA Central Time Zone
-        # The next three lines will get the router IP from the internet
-        try:
-            self.connect(seconds = 10)
-        except SystemExit as e:
-            sys.exit(1)
+        #################################
+        # DON'T FORGET!
+        # Need to get WAN IP
+        #################################
+        
+        # Code commented out because I don't believe it should be part of init   
+        # #The Wide Area Network address (WAN-IP) can be used to determine time zone.
+        # self._wan_ip = "172.56.93.182" #Will default to be in USA Central Time Zone
+        # # This next code will get the router IP from the internet
+        # try:
+            # self.connect(seconds = 10)
+        # except SystemExit as e:
+            # sys.exit(1)
     
-        self.getRouterIP()
-        self.disconnect()
-        #print("INIT to: ", self.ssid, self.password)
+        # self.getRouterIP()
+        # self.disconnect()
+        # #print("INIT to: ", self.ssid, self.password)
+
 
     def connect(self, seconds = 5):
         self.wlan.active(True)
-        if not self.connect_flag:
-            print(f"Connecting to {self.ssid}...")
-            self.wlan.connect(self.ssid, self.password)
-            while not self.wlan.isconnected() and seconds > 0:
-                print(f"Waiting {seconds} seconds for connection...")
-                seconds -= 1
-                time.sleep(1)
-        if seconds == 0:
-            self.led.off()
-            self.connect_flag = False
-            sys.exit(1) # ValueError("Unable to connect to internet.")
-        else:
-            self.led.on()
-            self.connect_flag = True
-            print("Connected, network config:", self.wlan.ifconfig())
+        retry_time = seconds
+        #Only try to connect if I'm not already connected.
+        if not self.wlan.isconnected(): #self.connect_flag:
+            for retry_count in range(1,4): #Maximum of 3 retries
+                seconds = retry_time
+                print(f"Connecting to {self.ssid}... try #{retry_count}.")
+                try:
+                    self.wlan.connect(self.ssid, self.password)
+                except:
+                    #If you got here, connection timed out after three retries
+                    raise InternetNotConnected("Error connecting to internet")
+                
+                while not self.wlan.isconnected() and seconds > 0:
+                    print(f"Waiting {seconds} seconds for connection...")
+                    seconds -= 1
+                    time.sleep(1)
+
+                if seconds == 0: # If seconds == 0 we timed out.
+                    self.led.off()
+                    print(f"Internet connection try # {retry_count} timed out!")
+                    time.sleep(2)
+                    continue #Jump to next iteration of the for loop
+                elif self.wlan.isconnected():
+                    #Getting here implies I have a connection
+                    self.led.on()
+                    print("Success!")
+                    return #Exit IMMEDIATELY to avoid raising the exception.
+            raise InternetTimeoutError
+
 
     def disconnect(self):
-        if self.connect_flag:
+        if self.wlan.isconnected():#self.connect_flag:
             self.wlan.disconnect()
             self.wlan.active(False)
             self.led.off()
-            self.connect_flag = False
+            #self.connect_flag = False
             print("Disconnected from WIFI.")
 
     def is_connected(self):
-        return self.connect_flag
+        return self.wlan.isconnected() #self.connect_flag
 
-    def setDateTimeURL(self, host, api_key):
+    def led_control(self, mode):
+        if mode == "toggle": self.led.toggle()
+        elif mode == "on": self.led.on()
+        elif mode == "off": self.led.off()
+        
+    def _setDateTimeURL(self, host, api_key):
+        #I need the router IP for this to work.
+        if self._wan_ip == "": self.getRouterIP()
         # print(host,api_key,self._wan_ip)
         self._dateTimeURL = 'https://' + host + '?apiKey='+ api_key + '&ip=' + self._wan_ip
         
@@ -78,6 +111,7 @@ class InternetManager:
             Nothing, but sets class variable self._wan_ip
             str: The public IP address as a string, or None if there is an error.
         """
+        if self.wlan.isconnected() == False: self.connect
         response = None
         try:
             # Use an external service to get the WAN IP (public IP)
@@ -99,7 +133,7 @@ class InternetManager:
                 response.close()
             
     def get_local_time_zone(self):
-        #requires that setDateTimeURL ba called previously
+        #requires that _setDateTimeURL be called previously
         response = urequests.get(self._dateTimeURL)
         data = ujson.loads(response.text)
         response.close()
@@ -169,23 +203,18 @@ class InternetManager:
         return data
 
     def time_from_internet(self, host, api_key):
-        try:
-            print("Connecting in time_from_internet.")
-            self.connect(seconds = 5)
-        except:
+        # Default return value to my birthday.  This can act as a flag that the rtc has not been retrieved from the internet.
+        return_value = [2000,2,3,8,35,0,0] #RP2 doesn't like 1959 (I guess I'm really that old!)
+
+        if not self.is_connected():
             print("No internet connection")
-            # Default return value to my birthday.  This can act as a flag that the rtc has not been retrieved from the internet.
-            return_value = [2000,2,3,8,35,0,0] #RP2 doesn't like 1959 (I guess I'm really that old!)
+            raise InternetNotConnected
         else:
-            #Getting here implies a good connection to the Internet.
-            time.sleep(1) # Try a little delay to see if it helps.
-            self.setDateTimeURL(host, api_key) #Sets up a variable inside the class
+            #while max_retries > retry_count and not self.is_connected():
+            self._setDateTimeURL(host, api_key) #Sets up a variable inside the class
             
             #Get the current time from the internet
             return_value = self.getDateTime()
-
-        finally:
-            # To disconnect
-            self.disconnect()
+                
         return return_value
             

@@ -1,0 +1,1 @@
+{"alert_time":43200,"email_addresses":["david.dupont1959@gmail.com"],"interval_time":600,"location":"DevCentral","logLevel":"INFO","phone_numbers":["6035983717@tmomail.net"],"wifi_password":"notyournetwork","wifi_ssid":"DLD_Home"}

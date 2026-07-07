@@ -58,7 +58,7 @@ GITHUB_BRANCH = "main"
 
 # Path inside the repo where manifest.json lives (no leading slash).
 # Use "" for the repo root.
-REPO_BASE_PATH = "https://github.com/daviddupont1959-sys/JMD_1000-pico-firmware"
+REPO_BASE_PATH = ""
 
 # Root on the Pico's filesystem where your project lives.
 # "/" means the root; change to "/project" etc. if needed.

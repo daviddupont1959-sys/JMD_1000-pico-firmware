@@ -1,1 +1,0 @@
-{"alert_time":43200,"email_addresses":["theturningpointe@gmail.com","david.dupont1959@gmail.com"],"interval_time":600,"location":"Dad's house ","logLevel":"INFO","phone_numbers":["4133133730@tmomail.net","6035983717@tmomail.net"],"wifi_password":"Janemarie34","wifi_ssid":"Spacedinvaders"}

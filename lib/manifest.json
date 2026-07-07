@@ -1,0 +1,53 @@
+{
+  "version": "2.03",
+  "files": [
+    {
+      "path": "Detect.py",
+      "sha256": "7fd363712ced74fb7a3091b833a668e219b1bb1caafa52ed6d7dd077e50086fa"
+    },
+    {
+      "path": "config.txt",
+      "sha256": "ff832e1da4dd1097c45f68f3e877f278554d04e969ce138d2c33075c7a88a7c6"
+    },
+    {
+      "path": "lib/ble_advertising.py",
+      "sha256": "49ea25cb8984d0efb1dfb2da183d6bd5a56706adf3173d6ea9262f8ec92c9762"
+    },
+    {
+      "path": "lib/iBLE.py",
+      "sha256": "16091fe2fe459fe20809d5ebdd373249f37591cb12bd34af7da314c9d477f467"
+    },
+    {
+      "path": "lib/iCFG.py",
+      "sha256": "27b0f393d3e5cf9b385613c84ab973599aef306411d60ae76f9719117da44000"
+    },
+    {
+      "path": "lib/iClk.py",
+      "sha256": "ff8efe4352ae017d7d85f25780568e444c8f9cec571bdcbaaf6f9a15f8164ea4"
+    },
+    {
+      "path": "lib/iLogFile.py",
+      "sha256": "13ca959396e55f0b1bdc31a473a096dc617b7435c4a592ff700bd8a8c0dc153e"
+    },
+    {
+      "path": "lib/iNet.py",
+      "sha256": "aa79361992ecd699d499cda59e19a18ddb972899c01ac04f9adaa66ca3ebbc8f"
+    },
+    {
+      "path": "lib/ota_update.py",
+      "sha256": "a317509c18fe5b4649bcd410e06c06c2dbb64a35060863d353608304e5d2fc38"
+    },
+    {
+      "path": "lib/secure_config.py",
+      "sha256": "8026518486f125cd1ea004d98fb49e8a816a10781c7f4e756a4d6e31ada7b16f"
+    },
+    {
+      "path": "lib/umqtt_simple.py",
+      "sha256": "6c3fbe0f42a20866c3a40f8c4fd449e33588c631c414f951d7fea28fb22676fd"
+    },
+    {
+      "path": "main.py",
+      "sha256": "9493807b5783b8ff2bc65c3b56af20671b15c0079644e3cda62e9d5e906cebf6"
+    }
+  ]
+}

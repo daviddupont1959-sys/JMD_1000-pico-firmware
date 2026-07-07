@@ -66,7 +66,190 @@ Motion Detector by Just Me Designs (JMD)
                     After a long break to digitize some film, revisiting this project.
                     Updated MQTT topic structure. (With AI help)
                     Updated handler for MQTT requests. (With AI help)
+
+    2026/06/23 - Version 2.02
+                    Bug fixes identified during AI code review. (With AI help)
+                    - Added missing 'import ota_update' (OTA would crash on first use)
+                    - Fixed NameError: 'topic_ack' -> topics["topic_ack"] in handle_update
+                    - Fixed termMsg() call missing topic argument (would crash on internet time failure)
+                    - Fixed handle_sync_time to use setRTC() correctly instead of non-existent set_time()
+                    - Fixed motion_flag logic: added ever_seen_motion flag to prevent false alert on boot
+                    - Fixed iLogFile: string+int concat crash and wrong .py extension in log file deletion
+                    - Changed FW_REV from float to string "2.02" to avoid float representation issues
+                    - Fixed iCFG: added _sanitize() to coerce numeric config values to int after
+                      load or MQTT set_config update, preventing TypeError crash if string values sent
                     
                     
                     
 '''
+                    - Changed I/O pins as follows:
+                        ----------------------------------
+                        | Description  | Was    | Is     |
+                        ----------------------------------
+                        | Status       | 9      | 18     |
+                        ----------------------------------
+                        | Bluetooth    | 7      | 20     |
+                        ----------------------------------
+                        | WiFi         | 8      | 19     |
+                        ----------------------------------
+                        | Motion       | 6      | 21     |
+                        ----------------------------------
+                        | Alert        | 5      | 22     |
+                        ----------------------------------
+                        | PIR          | 1      | 28     |
+                        ----------------------------------
+                    - Revised I/O pins again for mechanical layout - LEDs now contiguous
+                      GPIO 16-20 block at board edge, ground on pin 23:
+                        ----------------------------------
+                        | Description  | Was    | Is     |
+                        ----------------------------------
+                        | Status       | 18     | 16     |
+                        ----------------------------------
+                        | WiFi         | 19     | 17     |
+                        ----------------------------------
+                        | Bluetooth    | 20     | 18     |
+                        ----------------------------------
+                        | Motion       | 21     | 19     |
+                        ----------------------------------
+                        | Alert        | 22     | 20     |
+                        ----------------------------------
+                        | PIR          | 28     | 28 (unchanged) |
+                        ----------------------------------
+                    - Enhanced get_config command: now accepts an optional dot-path in the
+                      message body (e.g. "thresholds.inactivity_alert") to return a single
+                      config value instead of the full config. Empty payload still returns
+                      the full config. Invalid/unknown paths now return a clear error on
+                      response/error instead of failing silently.
+                    - Fixed set_config: merge_dict now validates against the existing config
+                      schema instead of blindly creating new keys. Sending a flat/incorrect
+                      key (e.g. "inactivity_alert" instead of "thresholds.inactivity_alert")
+                      now returns ERR: unknown config key '...' instead of silently creating
+                      an orphaned, confusing top-level entry in config.txt. Also rejects
+                      attempts to overwrite a nested setting with a single scalar value.
+                      The update is validated against a trial copy first, so a rejected
+                      key cannot leave the live config partially modified.
+                    - Fixed init_RTC: added try/except around time_from_internet call to
+                      catch OSError -2 (DNS resolution failure). Previously a transient DNS
+                      failure during startup would crash the device even though WiFi and MQTT
+                      were both connected. Now logs the error and falls back to birthday
+                      sentinel so the main loop NeedUpdate logic retries automatically.
+                    - Added lamp_test() function: sequential LED test runs at startup
+                      to verify all LEDs are working before monitoring begins
+                    - Added ble_manager.un_advertise() at end of allow_bt() to cleanly
+                      stop BLE advertising after the 15 second window expires
+                    - Improved inactivity alert message: threshold now displayed as
+                      HH:MM:SS instead of a raw decimal hours value
+                    - Removed unused iEmail.py and umail.py from lib folder
+                    - Renamed email_message_text to alert_message_text throughout
+                      Detect.py to reflect that notifications are now sent via ntfy
+                      push notifications, not email
+                    - Final I/O pin assignments (updated to match physical wiring):
+                        ----------------------------------
+                        | Description  | GPIO   | HW Pin |
+                        ----------------------------------
+                        | Status       | 20     | 26     |
+                        ----------------------------------
+                        | WiFi         | 19     | 25     |
+                        ----------------------------------
+                        | Bluetooth    | 18     | 24     |
+                        ----------------------------------
+                        | Motion       | 17     | 22     |
+                        ----------------------------------
+                        | Alert        | 16     | 21     |
+                        ----------------------------------
+                        | PIR          | 28     | 34     |
+                        ----------------------------------
+                        | Ground       | N/A    | 23     |
+                        ----------------------------------
+                    - Removed unused library files: InternetHandler.py, Wifi.py,
+                      iClk_WithTimeZone.py (dead code from earlier versions, never
+                      imported in v2.02)
+                    - Fixed BLE LED not lighting on connection: added explicit
+                      ble_manager.led_control("on") in allow_bt() when a connection
+                      is detected, to handle race condition between IRQ handler and
+                      polling loop
+                    - Fixed check_bt: added 30-second idle timeout to handle apps
+                      (like MIT App Inventor) that don't send a clean BLE disconnect.
+                      Idle timer resets on any received data, and forces a disconnect
+                      after 30 seconds of inactivity rather than waiting indefinitely.
+                    - Added ntfy push notification on device boot/restart so family
+                      members are notified when the device comes online
+                    - Fixed WiFi drop crash (test 6.1): OSError EHOSTUNREACH was
+                      propagating up and crashing the device when network dropped.
+                      Fixed by:
+                      - termMsg now catches OSError in addition to SystemExit
+                      - publish_time() call in main loop wrapped in try/except
+                      - Alert SET and CLEAR publish calls in main loop wrapped
+                        in try/except so a network drop during alert processing
+                        no longer crashes the device
+                    - Added network.hostname("JMD-1000") in iNet.py connect() method
+                      before wlan.active(True) so router displays device name instead
+                      of MAC address
+                    - Removed BLE idle timeout from check_bt — no longer needed
+                      since App Inventor app now disconnects cleanly via Connect
+                      by index method
+                    - Fixed WiFi drop recovery: MQTT OSError handler now checks and
+                      reconnects WiFi before attempting MQTT reconnection. Previously
+                      MQTT reconnect was attempted while WiFi was still broken, causing
+                      an endless retry loop. Also improved is_connected() in iNet.py
+                      to use wlan.status() == 3 alongside isconnected() for more
+                      reliable WiFi state detection.
+                    - Fixed commands not working after extended runtime: two root causes
+                      found and fixed:
+                      1. connect_mqtt() was not re-subscribing after reconnection, so
+                         after any MQTT reconnect the device could publish but not receive
+                         commands until a full reboot
+                      2. check_msg() only caught OSError but not MQTTException — broker
+                         dropping the subscription raised MQTTException which was silently
+                         swallowed, breaking command reception while publishing continued
+                      - Added periodic ping() every 60 seconds to keep broker connection
+                        alive on long-running sessions and prevent silent subscription loss
+
+    2026/07/06 - Version 2.03
+                    Version bump to establish clean baseline for long-term testing
+                    and pre-deployment validation. All changes since 2.02 initial
+                    release are consolidated here:
+
+                    Firmware fixes:
+                    - Fixed init_RTC: OSError -2 (DNS failure) no longer crashes
+                      device on startup — falls back to birthday sentinel and retries
+                    - Fixed termMsg: now catches OSError in addition to SystemExit
+                      so network failures during publish are logged, not crashed
+                    - Fixed publish_time: checks and reconnects WiFi before attempting
+                      MQTT reconnection when network is unreachable
+                    - Fixed check_msg: now catches MQTTException in addition to OSError
+                      so broker-side subscription drops are handled gracefully
+                    - Fixed connect_mqtt: now re-subscribes after every reconnection
+                      so commands work after any MQTT reconnect, not just after reboot
+                    - Added periodic ping() every 60 seconds to keep broker connection
+                      alive on long-running sessions
+                    - Fixed set_config: schema validation now rejects unknown keys,
+                      flat keys instead of nested paths, and scalar values where a
+                      nested object is expected — all rejected atomically with no
+                      partial updates saved
+                    - Fixed get_config: now accepts optional dot-path for single value
+                      retrieval (e.g. "thresholds.inactivity_alert") with clear error
+                      on invalid paths
+                    - Fixed iCFG: added _sanitize() to coerce numeric config values
+                      to int after any load or MQTT update
+                    - Fixed BLE LED not lighting on connection
+                    - Fixed check_bt duplicate while loop (introduced and fixed)
+                    - Removed BLE idle timeout — no longer needed with corrected
+                      App Inventor connect-by-index method
+                    - Added ntfy push notification on device boot/restart
+                    - Added lamp_test() sequential LED test on startup
+                    - Added ble_manager.un_advertise() at end of allow_bt()
+                    - Improved inactivity alert message to show HH:MM:SS format
+                    - Added network.hostname("JMD-1000") in iNet.py for router
+                      device name display
+                    - Improved is_connected() to use wlan.status() == 3 for more
+                      reliable WiFi state detection
+                    - Added WiFi reconnection logic before MQTT reconnect in main
+                      loop OSError handler
+
+                    Code cleanup:
+                    - Removed unused library files: iEmail.py, umail.py,
+                      InternetHandler.py, Wifi.py, iClk_WithTimeZone.py
+                    - Renamed email_message_text to alert_message_text throughout
+                    - Changed FW_REV from float to string
+                    - Final I/O pin assignments consolidated (see pin table in 2.02)

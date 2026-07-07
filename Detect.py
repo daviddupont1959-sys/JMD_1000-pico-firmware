@@ -25,11 +25,12 @@ import os
 import ujson as json
 import gc
 import urequests
+import ota_update
 
 '''
 # Variable Definition
 '''
-FW_REV = 2.01
+FW_REV = "2.03"
 rtc_value = [2000,2,3,8,35,0] # My birthday in the year 2000 (RP2 didn't like 1959!)
 
 # Class variables
@@ -79,6 +80,7 @@ topics = {
     "topic_reboot"           : f"{client_id}/command/reboot".encode(),
     "topic_sync_time"        : f"{client_id}/command/sync_time".encode(),
     "topic_cfg_get"          : f"{client_id}/command/get_config".encode(),
+    "topic_update"          : f"{client_id}/command/update".encode(),
 
     # ----------------------------------------------------
     # RESPONSES (device → phones)
@@ -103,15 +105,32 @@ def handle_set_config(msg_str):
     try:
         update = json.loads(msg_str)
 
-        # Deep merge helper
-        def merge_dict(base, new):
+        # Deep merge helper - only allows updating keys that already exist
+        # in the config schema. Rejects unknown keys instead of silently
+        # creating orphaned top-level entries (e.g. sending "inactivity_alert"
+        # instead of the correct "thresholds.inactivity_alert").
+        def merge_dict(base, new, path=""):
             for key, value in new.items():
-                if isinstance(value, dict) and isinstance(base.get(key), dict):
-                    merge_dict(base[key], value)
+                full_path = f"{path}.{key}" if path else key
+                if key not in base:
+                    raise KeyError(f"unknown config key '{full_path}'")
+                if isinstance(value, dict):
+                    if not isinstance(base[key], dict):
+                        raise KeyError(f"'{full_path}' is not a nested setting")
+                    merge_dict(base[key], value, full_path)
                 else:
+                    if isinstance(base[key], dict):
+                        raise KeyError(f"'{full_path}' is a nested setting, not a single value")
                     base[key] = value
 
-        merge_dict(myConfig.config, update)
+        # Work on a copy first so a partial failure doesn't leave the
+        # live config half-updated. (json round-trip avoids needing the
+        # 'copy' module, which isn't guaranteed to be on MicroPython.)
+        trial = json.loads(json.dumps(myConfig.config))
+        merge_dict(trial, update)
+
+        myConfig.config = trial
+        myConfig._sanitize()
         myConfig.save_config()
 
         client.publish(topics["topic_ack"], b"OK: config updated")
@@ -132,21 +151,71 @@ def handle_reboot(msg_str):
     machine.reset()
 
 
-#This would require the phone to send the current timestamp
+#This would require the phone to send the current timestamp as {"epoch": <unix_timestamp>}
 def handle_sync_time(msg_str):
     try:
         update = json.loads(msg_str)
-        rtc_manager.set_time(update["epoch"])
+        epoch = update["epoch"]
+        # Convert epoch to a datetime list [year, month, day, hour, minute, second]
+        t = time.localtime(epoch)
+        datetime_list = [t[0], t[1], t[2], t[3], t[4], t[5]]
+        rtc_manager.setRTC(datetime_list)
         client.publish(topics["topic_ack"], b"OK: time synced")
-    except Exception:
-        client.publish(topics["topic_err"], b"ERR: time sync failed")
+    except Exception as e:
+        client.publish(topics["topic_err"], f"ERR: time sync failed: {e}".encode())
 
 
 #This seems to be working
 def handle_cfg_get(msg_str):
-    cfg_json = myConfig.get_config()
-    client.publish(topics["topic_cfg_full"], cfg_json.encode())
+    path = (msg_str or "").strip()
 
+    # No path given -> return the full config (original behavior)
+    if not path:
+        cfg_json = myConfig.get_config()
+        client.publish(topics["topic_cfg_full"], cfg_json.encode())
+        return
+
+    # Walk the dot-path, e.g. "thresholds.inactivity_alert"
+    keys = path.split(".")
+    node = myConfig.config
+    for key in keys:
+        if isinstance(node, dict) and key in node:
+            node = node[key]
+        else:
+            client.publish(
+                topics["topic_err"],
+                f"ERR: unknown config key '{path}'".encode()
+            )
+            return
+
+    # Found it - report back the single value
+    try:
+        value_json = json.dumps({path: node})
+    except Exception:
+        value_json = json.dumps({path: str(node)})
+    client.publish(topics["topic_cfg_full"], value_json.encode())
+
+def handle_update(msg_str):
+    result = ota_update.check_and_update()
+    # Optionally publish the result back before rebooting
+    client.publish(topics["topic_ack"], str(result).encode())
+    # Commented for now so I can look at what is going on.
+#     if result["updated"] and not result["errors"]:
+#         machine.reset()
+
+# Explicit top-down order, independent of dict iteration behavior
+led_order = ["Working", "WIFI", "BlueTooth", "Motion", "ALERT"]
+
+def lamp_test():
+    for pin in leds.values():
+        pin.off()
+    for i in range(3):
+        print("LED Test loop:", i + 1)
+        for name in led_order:
+            pin = leds[name]
+            pin.on()
+            time.sleep(.25)
+            pin.off()
 
 # ----------------------------------------------------
 # COMMAND DISPATCHER
@@ -157,23 +226,29 @@ command_handlers = {
     topics["topic_reboot"]: handle_reboot,
     topics["topic_sync_time"]: handle_sync_time,
     topics["topic_cfg_get"]: handle_cfg_get,
+    topics["topic_update"]: handle_update,
 }
 
 
 # Define the pins and names for the LEDs
 leds = {
-    "WIFI": machine.Pin(8, machine.Pin.OUT),
-    "BlueTooth": machine.Pin(7, machine.Pin.OUT),
-    "Motion": machine.Pin(6, machine.Pin.OUT),
-    "ALERT": machine.Pin(5, machine.Pin.OUT),
-    "Working": machine.Pin(9, machine.Pin.OUT)
+    "Working": machine.Pin(20, machine.Pin.OUT),
+    "WIFI": machine.Pin(19, machine.Pin.OUT),
+    "BlueTooth": machine.Pin(18, machine.Pin.OUT),
+    "Motion": machine.Pin(17, machine.Pin.OUT),
+    "ALERT": machine.Pin(16, machine.Pin.OUT)
 }
+
+lamp_test()
 
 #Start by assuming no motion or alert
 detector_state = alert_state = False
 #Make sure there's no motion or alert flags set.
 motion_flag = alert_flag = False
 alert_condition = False
+# Tracks whether motion has been seen at least once since boot.
+# Prevents a false alert if the device starts up during a quiet period.
+ever_seen_motion = False
 
 #This is loaded from an encrypted file.
 secrets = secure_config.load_config("secrets.enc") # E-mail and geo-location creds.
@@ -382,9 +457,9 @@ def termMsg(topic, message_text):
                 message_text = message_text.encode()
 
             client.publish(topic, message_text)
-        except SystemExit as e:
-            print(f"Trouble publishing: {message_text} to {topic}")
-            log_file.error(f"Trouble publishing: {message_text} to {topic}")
+        except (SystemExit, OSError) as e:
+            print(f"Trouble publishing: {message_text} to {topic}: {e}")
+            log_file.error(f"Trouble publishing: {message_text} to {topic}: {e}")
 
 def init_RTC(secrets):
     #Expects that internet is connected.
@@ -394,8 +469,15 @@ def init_RTC(secrets):
     #If there's not internet connection the return value will be my birthday in the year 2000
     termMsg(topics["topic_log"], f"Getting time (main) from{secrets['dateTime']['host']}.")
     log_file.debug(f"Getting time (main) from{secrets['dateTime']['host']}.")
-    #time_from_internet might raise an error, but I dont really care since it will return a flag value
-    rtc_manager.setRTC(internet_manager.time_from_internet(secrets["dateTime"]["host"], secrets["dateTime"]["API_KEY"]))
+    # Wrap in try/except — time_from_internet can throw OSError -2 (DNS failure)
+    # even when WiFi and MQTT are connected. In that case we fall back to the
+    # birthday sentinel (year 2000) so the main loop knows to retry later.
+    try:
+        rtc_manager.setRTC(internet_manager.time_from_internet(secrets["dateTime"]["host"], secrets["dateTime"]["API_KEY"]))
+    except OSError as e:
+        log_file.error(f"init_RTC: DNS/network error getting time: {e}. Will retry in main loop.")
+        termMsg(topics["topic_log"], f"init_RTC: time sync failed (OSError {e}), will retry.")
+        # Leave RTC at birthday sentinel — main loop NeedUpdate logic will retry
         
     return #No value is returned, but the RTC value (inside that class) will be updated.
  
@@ -408,12 +490,14 @@ def allow_bt(ble_interval = 15):
         #Bluetooth LED is handled by the class, and turns on when a connection is made
         #If there's a connection take care of it
         if ble_manager.is_connected():
+            ble_manager.led_control("on")  # ensure BLE LED is on
             check_bt()
         else:
             time.sleep(0.25)
             ble_manager.led_control("toggle")
-    # If we got here the timer is done, make sure led is off
+    # If we got here the timer is done, make sure led is off, the stop advertising
     ble_manager.led_control("off")
+    ble_manager.un_advertise()
 
 def mqtt_callback(topic, msg):
     try:
@@ -458,6 +542,8 @@ def connect_mqtt(retries=5, delay=2):
             
             if res == 0 or res is None: 
                 print(f'Successfully connected to {mqtt_server} as {client_id}')
+                client.subscribe(topics["topic_cmd_all"])
+                print(f'Subscribed to {topics["topic_cmd_all"]}')
                 return client
             else:
                 print(f"Broker rejected connection with code: {res}")
@@ -516,9 +602,22 @@ def publish_time():
     try:
         client.publish(topics["topic_time"], formatted_time_basic.encode())
         client.publish(topics["topic_awake"], awake_payload)
-    except:
-        #If publishing didn't work, try disconnect, and re-connect
-        client.disconnect()
+    except OSError as e:
+        print(f"publish_time failed ({e}), checking WiFi...")
+        # Check WiFi first — MQTT reconnect is pointless if WiFi is down
+        if not internet_manager.is_connected():
+            print("WiFi lost — attempting reconnection...")
+            leds["WIFI"].off()
+            try:
+                internet_manager.connect()
+            except Exception as wifi_err:
+                print(f"WiFi reconnection failed: {wifi_err}")
+                return  # Give up this cycle, retry next time
+        # WiFi is up (or just reconnected) — reconnect MQTT
+        try:
+            client.disconnect()
+        except:
+            pass
         client = connect_mqtt()
 
 
@@ -572,7 +671,7 @@ ble_manager.on_write(on_rx)
 '''
 
 #Set up the motion detector
-motion_detector_pin = machine.Pin(1, machine.Pin.IN, machine.Pin.PULL_DOWN)
+motion_detector_pin = machine.Pin(28, machine.Pin.IN, machine.Pin.PULL_DOWN)
 
 #Make sure all LEDs start in the off state
 for name, led in leds.items(): led.off()
@@ -621,6 +720,7 @@ while True: #This acts like a repeat / until loop
 
 #Send start up notification
 log_file.info(f"Detector started. Firmware: {FW_REV}.")
+send_inactivity_alert(f"Motion detector started at {myConfig.config['location']}. Firmware: {FW_REV}.")
 
 #Enter the main endless while loop
 while True:
@@ -631,7 +731,7 @@ while True:
     #Start by assuming I just saw motion
 
     if rtc_manager.get_time_part("year") == 2000: #getting time from internet failed.
-        termMsg("Getting time from internet failed. Waiting 1 minute")
+        termMsg(topics["topic_log"], "Getting time from internet failed. Waiting 1 minute")
         time.sleep(60)  #Wait for 1 minute
         continue        #Try again
 
@@ -664,18 +764,40 @@ while True:
                 else:
                     print("MQTT client was None, reconnecting...")
                     client = connect_mqtt()
-            except OSError as e:
-                print(f"Socket error detected ({e}), attempting clean MQTT reconnection...")
+            except (OSError, MQTTException) as e:
+                print(f"MQTT error detected ({e}), checking WiFi before MQTT reconnection...")
                 try:
                     client.disconnect()
                 except:
                     pass  # Socket is already dead, ignore failure to disconnect cleanly
+                # Check WiFi first — MQTT can't reconnect if WiFi is down
+                if not internet_manager.is_connected():
+                    print("WiFi lost — attempting WiFi reconnection first...")
+                    leds["WIFI"].off()
+                    try:
+                        internet_manager.connect()
+                    except Exception as wifi_err:
+                        print(f"WiFi reconnection failed ({wifi_err}), will retry next cycle")
+                        time.sleep(5)
+                        continue  # skip MQTT reconnect, try again next loop iteration
                 time.sleep(2)
                 client = connect_mqtt()
+
+            # Send a keep-alive ping every 60 seconds to prevent broker
+            # dropping the subscription on long-running sessions
+            if time.time() % 60 == 0:
+                try:
+                    client.ping()
+                except:
+                    pass
     
                 
             #Send the current time (every 5 seconds) to the MQTT broker
-            if time.time() % 5 == 0: publish_time()#Only send the time every 5 seconds
+            if time.time() % 5 == 0:
+                try:
+                    publish_time() #Only send the time every 5 seconds
+                except OSError as e:
+                    print(f"publish_time failed ({e}), will retry next cycle")
 
             detector_state = motion_detector_pin.value()	# Check Motion detector
             leds["Motion"].value(detector_state)
@@ -683,6 +805,7 @@ while True:
             if detector_state: #True - Motion was detected.
                 motion_time = time.time() #The time when motion was last detected
                 motion_flag = True
+                ever_seen_motion = True
                 alert_flag = False
                 
                 #Turn off alert (if active)
@@ -691,16 +814,20 @@ while True:
                     leds["ALERT"].off()
                     # Need to send alert cancel message
                     log_file.info("ALERT cleared!")
-                    email_message_text = f"At {rtc_manager.seconds_to_time(time.time())} motion was detected at {myConfig.config['location']}, alert cancelled."
-                    termMsg(topics["topic_log"], email_message_text)
-                    send_inactivity_alert(email_message_text)
-                    client.publish(topics["topic_alert"], b"CLEAR", retain=False, qos=0)
+                    alert_message_text = f"At {rtc_manager.seconds_to_time(time.time())} motion was detected at {myConfig.config['location']}, alert cancelled."
+                    termMsg(topics["topic_log"], alert_message_text)
+                    send_inactivity_alert(alert_message_text)
+                    try:
+                        client.publish(topics["topic_alert"], b"CLEAR", retain=False, qos=0)
+                    except OSError as e:
+                        print(f"Failed to publish CLEAR alert state: {e}")
                 break #Return to first sub-loop
                             
             else: #No motion at the moment
                 quiet_time = time.time() - motion_time
                 alert_condition = (
-                    (not motion_flag)
+                    ever_seen_motion        # don't alert before we've seen any motion at all
+                    and (not motion_flag)   # no motion in the current check cycle
                     and (quiet_time >= myConfig.config["thresholds"]["inactivity_alert"])
                     and rtc_manager.is_in_awake_window(myConfig.config["awake_window"])
                 )
@@ -710,10 +837,25 @@ while True:
                     leds["ALERT"].on()
                     # Need to send alert active message
                     log_file.info("ALERT Triggered!")
-                    email_message_text = f"At {rtc_manager.seconds_to_time(time.time())} no motion has been detected for {myConfig.config["thresholds"]["inactivity_alert"] / 3600} hours at {myConfig.config['location']}."
-                    termMsg(topics["topic_log"], email_message_text)
-                    send_inactivity_alert(email_message_text)
-                    client.publish(topics["topic_alert"], b"SET", retain=False, qos=0)
+
+                    # 1. Get the total seconds
+                    total_seconds = myConfig.config["thresholds"]["inactivity_alert"]
+
+                    # 2. Calculate hours, minutes, and seconds
+                    hours = total_seconds // 3600
+                    minutes = (total_seconds % 3600) // 60
+                    seconds = total_seconds % 60
+
+                    # 3. Format into HH:MM:SS
+                    time_string = "{:02d}:{:02d}:{:02d}".format(hours, minutes, seconds)
+                    
+                    alert_message_text = f"At {rtc_manager.seconds_to_time(time.time())} no motion has been detected for {time_string} at {myConfig.config['location']}."
+                    termMsg(topics["topic_log"], alert_message_text)
+                    send_inactivity_alert(alert_message_text)
+                    try:
+                        client.publish(topics["topic_alert"], b"SET", retain=False, qos=0)
+                    except OSError as e:
+                        print(f"Failed to publish SET alert state: {e}")
             
                 motion_flag = False
                 continue #Next iteration of second sub-loop

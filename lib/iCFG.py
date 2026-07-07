@@ -17,10 +17,31 @@ class ConfigManager:
             }
         }
 
+    def _sanitize(self):
+        """Coerce config values to their correct types.
+        Guards against string values being sent where ints are expected,
+        which would cause TypeError comparisons in the main loop.
+        """
+        try:
+            t = self.config["thresholds"]
+            t["inactivity_alert"] = int(t["inactivity_alert"])
+            t["motion_interval"]  = int(t["motion_interval"])
+        except (KeyError, ValueError, TypeError):
+            pass
+        try:
+            w = self.config["awake_window"]
+            w["start"]["hour"]   = int(w["start"]["hour"])
+            w["start"]["minute"] = int(w["start"]["minute"])
+            w["end"]["hour"]     = int(w["end"]["hour"])
+            w["end"]["minute"]   = int(w["end"]["minute"])
+        except (KeyError, ValueError, TypeError):
+            pass
+
     def load_config(self):
         if self.filename in os.listdir():
             with open(self.filename, "r") as f:
                 self.config.update(json.load(f))
+            self._sanitize()
         else:
             self.save_config()
 
@@ -75,6 +96,7 @@ class ConfigManager:
         current_value = target[final_key]
         new_value = self._convert_value(value_str, type(current_value))
         target[final_key] = new_value
+        self._sanitize()
 
     def _convert_value(self, value_str, target_type):
         try:

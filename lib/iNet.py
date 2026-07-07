@@ -44,6 +44,7 @@ class InternetManager:
 
 
     def connect(self, seconds = 5):
+        network.hostname("JMD-1000")
         self.wlan.active(True)
         retry_time = seconds
         #Only try to connect if I'm not already connected.
@@ -84,7 +85,9 @@ class InternetManager:
             print("Disconnected from WIFI.")
 
     def is_connected(self):
-        return self.wlan.isconnected() #self.connect_flag
+        # wlan.isconnected() can return True even when the connection is broken.
+        # wlan.status() == 3 (network.STAT_GOT_IP) is more reliable.
+        return self.wlan.isconnected() and self.wlan.status() == 3
 
     def led_control(self, mode):
         if mode == "toggle": self.led.toggle()

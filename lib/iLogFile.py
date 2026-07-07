@@ -36,11 +36,14 @@ class LogManager:
             if file[0:underbar] == "log_":
                 log_file_numbers.append(int(file[underbar:file.find('.')]))
 
-            # Remove old files if there are more than max_log_file_count (10) rotated file.
+            # Remove old files if there are more than max_log_file_count (10) rotated files.
             if len(log_file_numbers) >= self.max_log_file_count:
                 for i in log_file_numbers[0:self.max_log_file_count - 1]:
-                    del_file_name = "log_" + i + ".py"
-                    os.remove(del_file_name)
+                    del_file_name = f"log_{i}.txt"
+                    try:
+                        os.remove(del_file_name)
+                    except OSError:
+                        pass  # File may not exist, that's fine
                     
         return max(log_file_numbers) + 1
         

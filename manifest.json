@@ -7,7 +7,7 @@
     },
     {
       "path": "config.txt",
-      "sha256": "ff832e1da4dd1097c45f68f3e877f278554d04e969ce138d2c33075c7a88a7c6"
+      "sha256": "7aa97b3ed9d2b1f40819873342c38ba03aceacad263037ce9cf4103a118fa94a"
     },
     {
       "path": "lib/ble_advertising.py",
@@ -19,7 +19,7 @@
     },
     {
       "path": "lib/iCFG.py",
-      "sha256": "27b0f393d3e5cf9b385613c84ab973599aef306411d60ae76f9719117da44000"
+      "sha256": "d60691e266a06eec0cbe66329f58c2c4bfc9d4603367aa93ba44971aecabcf4d"
     },
     {
       "path": "lib/iClk.py",

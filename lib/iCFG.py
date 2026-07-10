@@ -6,7 +6,6 @@ class ConfigManager:
         self.filename = filename
         self.config = {
             "thresholds": {
-                "motion_interval": 10,
                 "inactivity_alert": 60
             },
             "location": "4700 Rolling Water Dr.",
@@ -25,7 +24,6 @@ class ConfigManager:
         try:
             t = self.config["thresholds"]
             t["inactivity_alert"] = int(t["inactivity_alert"])
-            t["motion_interval"]  = int(t["motion_interval"])
         except (KeyError, ValueError, TypeError):
             pass
         try:
@@ -40,7 +38,20 @@ class ConfigManager:
     def load_config(self):
         if self.filename in os.listdir():
             with open(self.filename, "r") as f:
-                self.config.update(json.load(f))
+                saved = json.load(f)
+            # Only apply keys that exist in the schema (iCFG.py defaults).
+            # This makes iCFG.py the authoritative truth — any key in config.txt
+            # that isn't in the defaults is silently dropped, and any key in the
+            # defaults that isn't in config.txt keeps its default value.
+            # Net effect: orphaned keys disappear, new keys appear automatically.
+            def selective_merge(base, saved):
+                for key in base:
+                    if key in saved:
+                        if isinstance(base[key], dict) and isinstance(saved[key], dict):
+                            selective_merge(base[key], saved[key])
+                        else:
+                            base[key] = saved[key]
+            selective_merge(self.config, saved)
             self._sanitize()
         else:
             self.save_config()

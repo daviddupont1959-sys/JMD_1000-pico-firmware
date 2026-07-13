@@ -748,7 +748,12 @@ while True:
             break #Exits current loop and causes parent loop to go to next iteration. Which starts by getting the time.
             
         #I can't do this earlier because I just initialized the RTC
-        motion_time = time.time()
+        #Uses ticks_ms (a free-running counter) instead of time.time() because
+        #time.time() is tied to the RTC, and init_RTC() can jump the RTC forward
+        #or backward (weekly resync, DST, or recovering from a lost internet
+        #connection). ticks_ms() is unaffected by RTC changes, so quiet_time
+        #below always reflects real elapsed seconds.
+        motion_time = time.ticks_ms()
         
         #Second sub-loop
         while True:
@@ -803,7 +808,7 @@ while True:
             leds["Motion"].value(detector_state)
             
             if detector_state: #True - Motion was detected.
-                motion_time = time.time() #The time when motion was last detected
+                motion_time = time.ticks_ms() #The time when motion was last detected (ticks_ms, not RTC-based)
                 motion_flag = True
                 ever_seen_motion = True
                 alert_flag = False
@@ -824,7 +829,9 @@ while True:
                 break #Return to first sub-loop
                             
             else: #No motion at the moment
-                quiet_time = time.time() - motion_time
+                #ticks_diff correctly handles ticks_ms() wraparound; result is in ms,
+                #so divide by 1000 to get seconds for comparison against the config threshold.
+                quiet_time = time.ticks_diff(time.ticks_ms(), motion_time) / 1000
                 alert_condition = (
                     ever_seen_motion        # don't alert before we've seen any motion at all
                     and (not motion_flag)   # no motion in the current check cycle

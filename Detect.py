@@ -30,7 +30,7 @@ import ota_update
 '''
 # Variable Definition
 '''
-FW_REV = "2.03"
+FW_REV = "2.04"
 rtc_value = [2000,2,3,8,35,0] # My birthday in the year 2000 (RP2 didn't like 1959!)
 
 # Class variables
@@ -811,11 +811,20 @@ while True:
                 motion_time = time.ticks_ms() #The time when motion was last detected (ticks_ms, not RTC-based)
                 motion_flag = True
                 ever_seen_motion = True
+
+                #Capture the latch BEFORE resetting it. alert_flag (not alert_condition)
+                #is the correct thing to check here: alert_condition is recomputed live
+                #every loop cycle (including the awake-window term), so it can silently
+                #flip back to False on its own (e.g. awake window changes) with no motion
+                #involved. Checking alert_condition here meant that once it had flipped
+                #False on its own, this block would never run on the next real motion
+                #event -- leaving the alert LED stuck on and no CLEAR message ever sent.
+                was_alert_active = alert_flag
                 alert_flag = False
-                
-                #Turn off alert (if active)
-                if alert_condition:
-                    alert_condition = False
+                alert_condition = False
+
+                #Turn off alert (if one was actually active)
+                if was_alert_active:
                     leds["ALERT"].off()
                     # Need to send alert cancel message
                     log_file.info("ALERT cleared!")

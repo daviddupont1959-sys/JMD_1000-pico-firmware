@@ -253,3 +253,57 @@ Motion Detector by Just Me Designs (JMD)
                     - Renamed email_message_text to alert_message_text throughout
                     - Changed FW_REV from float to string
                     - Final I/O pin assignments consolidated (see pin table in 2.02)
+                    - Removed unused motion_interval config field from config.txt,
+                      iCFG.py defaults and _sanitize() — field was never referenced
+                      in Detect.py
+                    - Removed iClk.py.bak from package
+                    - Refactored load_config in iCFG.py: iCFG.py defaults are now
+                      the authoritative schema for config.txt. load_config uses a
+                      selective merge that only applies keys that exist in the schema,
+                      silently dropping orphaned keys (e.g. motion_interval) and
+                      preserving default values for any missing keys. This means:
+                      - Orphaned config keys disappear automatically on next load
+                      - New config keys added to iCFG.py defaults appear automatically
+                        after an OTA update without needing a set_config command
+                      - config.txt is always a clean subset of the schema
+
+    2026/07/12 - Version 2.04
+                    Fixed false inactivity alerts caused by RTC jumps. (With AI help)
+                    - Root cause: motion_time/quiet_time in the main loop were based
+                      on time.time(), which reads from the same RTC that init_RTC()
+                      writes to. Any RTC resync could distort the inactivity timer:
+                      - Weekly Sunday 2:01 AM resync landing on a DST transition
+                        could jump the clock forward, pushing quiet_time over the
+                        alert threshold with no real inactivity having occurred
+                      - Recovering from a lost internet connection (RTC stuck at
+                        the year-2000 sentinel) caused quiet_time to go deeply
+                        negative while broken, then jump ~26 years forward the
+                        moment the internet reconnected, guaranteeing a false alert
+                    - Fix: motion_time/quiet_time now use time.ticks_ms() /
+                      time.ticks_diff() instead of time.time(). ticks_ms() is a
+                      free-running counter independent of the RTC, so init_RTC()
+                      resyncs (weekly, DST, or internet-loss recovery) can no
+                      longer distort the inactivity measurement. Wall-clock time
+                      (time.time() / rtc_manager) is still used for is_in_awake_window
+                      and for human-readable timestamps in alert messages, where
+                      real calendar time is actually needed.
+
+                    Fixed alert stuck ON with no CLEAR message after awake_window
+                    changed mid-alert. (With AI help, found during manual regression
+                    testing of the above fix)
+                    - Root cause: the alert-clear block (on motion detected) checked
+                      alert_condition, but alert_condition is recomputed live every
+                      loop cycle, including the awake_window term. If awake_window
+                      was changed (or anything else caused is_in_awake_window() to
+                      go False) while an alert was active, alert_condition silently
+                      flipped back to False on its own -- with no motion involved.
+                      The next time motion was actually detected, the "if alert_condition"
+                      check was already False, so the clear-out block never ran:
+                      the ALERT LED stayed lit and no CLEAR message was ever
+                      published, orphaning the alert state.
+                    - Fix: the clear-out block now checks alert_flag (the intended
+                      latch for "an alert is currently active") instead of
+                      alert_condition. alert_flag is captured before being reset,
+                      so LED/log/CLEAR-publish only run when an alert was actually
+                      active, regardless of what alert_condition happens to be
+                      recalculated as on that cycle.

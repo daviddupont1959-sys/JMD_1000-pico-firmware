@@ -196,14 +196,18 @@ def handle_cfg_get(msg_str):
         value_json = json.dumps({path: str(node)})
     client.publish(topics["topic_cfg_full"], value_json.encode())
 
-def handle_update(msg_str):
-    result = ota_update.check_and_update()
-    # Optionally publish the result back before rebooting
-    client.publish(topics["topic_ack"], str(result).encode())
-    # Commented for now so I can look at what is going on.
-#     if result["updated"] and not result["errors"]:
-#         machine.reset()
 
+def handle_update(msg_str):
+    try:
+        client.publish(topics["topic_ack"], b"OTA: starting update check...")
+        result = ota_update.check_and_update()
+        client.publish(topics["topic_ack"], str(result).encode())
+        if result["updated"] and not result["errors"]:
+            time.sleep(2)  # give broker time to receive the ack before rebooting
+            machine.reset()
+    except Exception as e:
+        client.publish(topics["topic_err"], f"ERR: OTA failed: {e}".encode())
+        
 def handle_version(msg_str):
     # Send the firmware version to the state/version topic
     client.publish(topics["topic_version"], f"{FW_REV}".encode(), retain=True, qos=1)

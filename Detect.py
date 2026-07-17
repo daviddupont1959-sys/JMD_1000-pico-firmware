@@ -81,6 +81,7 @@ topics = {
     "topic_sync_time"        : f"{client_id}/command/sync_time".encode(),
     "topic_cfg_get"          : f"{client_id}/command/get_config".encode(),
     "topic_update"          : f"{client_id}/command/update".encode(),
+    "topic_get_version"     : f"{client_id}/command/get_version".encode(),
 
     # ----------------------------------------------------
     # RESPONSES (device → phones)
@@ -203,6 +204,11 @@ def handle_update(msg_str):
 #     if result["updated"] and not result["errors"]:
 #         machine.reset()
 
+def handle_version(msg_str):
+    # Send the firmware version to the state/version topic
+    client.publish(topics["topic_version"], f"{FW_REV}".encode(), retain=True, qos=1)
+    client.publish(topics["topic_ack"], f"OK: firmware version {FW_REV}".encode())
+
 # Explicit top-down order, independent of dict iteration behavior
 led_order = ["Working", "WIFI", "BlueTooth", "Motion", "ALERT"]
 
@@ -227,6 +233,7 @@ command_handlers = {
     topics["topic_sync_time"]: handle_sync_time,
     topics["topic_cfg_get"]: handle_cfg_get,
     topics["topic_update"]: handle_update,
+    topics["topic_get_version"]: handle_version,
 }
 
 
@@ -748,12 +755,7 @@ while True:
             break #Exits current loop and causes parent loop to go to next iteration. Which starts by getting the time.
             
         #I can't do this earlier because I just initialized the RTC
-        #Uses ticks_ms (a free-running counter) instead of time.time() because
-        #time.time() is tied to the RTC, and init_RTC() can jump the RTC forward
-        #or backward (weekly resync, DST, or recovering from a lost internet
-        #connection). ticks_ms() is unaffected by RTC changes, so quiet_time
-        #below always reflects real elapsed seconds.
-        motion_time = time.ticks_ms()
+        motion_time = time.time()
         
         #Second sub-loop
         while True:
@@ -808,23 +810,14 @@ while True:
             leds["Motion"].value(detector_state)
             
             if detector_state: #True - Motion was detected.
-                motion_time = time.ticks_ms() #The time when motion was last detected (ticks_ms, not RTC-based)
+                motion_time = time.time() #The time when motion was last detected
                 motion_flag = True
                 ever_seen_motion = True
-
-                #Capture the latch BEFORE resetting it. alert_flag (not alert_condition)
-                #is the correct thing to check here: alert_condition is recomputed live
-                #every loop cycle (including the awake-window term), so it can silently
-                #flip back to False on its own (e.g. awake window changes) with no motion
-                #involved. Checking alert_condition here meant that once it had flipped
-                #False on its own, this block would never run on the next real motion
-                #event -- leaving the alert LED stuck on and no CLEAR message ever sent.
-                was_alert_active = alert_flag
                 alert_flag = False
-                alert_condition = False
-
-                #Turn off alert (if one was actually active)
-                if was_alert_active:
+                
+                #Turn off alert (if active)
+                if alert_condition:
+                    alert_condition = False
                     leds["ALERT"].off()
                     # Need to send alert cancel message
                     log_file.info("ALERT cleared!")
@@ -838,9 +831,7 @@ while True:
                 break #Return to first sub-loop
                             
             else: #No motion at the moment
-                #ticks_diff correctly handles ticks_ms() wraparound; result is in ms,
-                #so divide by 1000 to get seconds for comparison against the config threshold.
-                quiet_time = time.ticks_diff(time.ticks_ms(), motion_time) / 1000
+                quiet_time = time.time() - motion_time
                 alert_condition = (
                     ever_seen_motion        # don't alert before we've seen any motion at all
                     and (not motion_flag)   # no motion in the current check cycle

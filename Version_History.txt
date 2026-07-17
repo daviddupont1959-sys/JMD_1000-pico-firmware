@@ -267,43 +267,14 @@ Motion Detector by Just Me Designs (JMD)
                         after an OTA update without needing a set_config command
                       - config.txt is always a clean subset of the schema
 
-    2026/07/12 - Version 2.04
-                    Fixed false inactivity alerts caused by RTC jumps. (With AI help)
-                    - Root cause: motion_time/quiet_time in the main loop were based
-                      on time.time(), which reads from the same RTC that init_RTC()
-                      writes to. Any RTC resync could distort the inactivity timer:
-                      - Weekly Sunday 2:01 AM resync landing on a DST transition
-                        could jump the clock forward, pushing quiet_time over the
-                        alert threshold with no real inactivity having occurred
-                      - Recovering from a lost internet connection (RTC stuck at
-                        the year-2000 sentinel) caused quiet_time to go deeply
-                        negative while broken, then jump ~26 years forward the
-                        moment the internet reconnected, guaranteeing a false alert
-                    - Fix: motion_time/quiet_time now use time.ticks_ms() /
-                      time.ticks_diff() instead of time.time(). ticks_ms() is a
-                      free-running counter independent of the RTC, so init_RTC()
-                      resyncs (weekly, DST, or internet-loss recovery) can no
-                      longer distort the inactivity measurement. Wall-clock time
-                      (time.time() / rtc_manager) is still used for is_in_awake_window
-                      and for human-readable timestamps in alert messages, where
-                      real calendar time is actually needed.
-
-                    Fixed alert stuck ON with no CLEAR message after awake_window
-                    changed mid-alert. (With AI help, found during manual regression
-                    testing of the above fix)
-                    - Root cause: the alert-clear block (on motion detected) checked
-                      alert_condition, but alert_condition is recomputed live every
-                      loop cycle, including the awake_window term. If awake_window
-                      was changed (or anything else caused is_in_awake_window() to
-                      go False) while an alert was active, alert_condition silently
-                      flipped back to False on its own -- with no motion involved.
-                      The next time motion was actually detected, the "if alert_condition"
-                      check was already False, so the clear-out block never ran:
-                      the ALERT LED stayed lit and no CLEAR message was ever
-                      published, orphaning the alert state.
-                    - Fix: the clear-out block now checks alert_flag (the intended
-                      latch for "an alert is currently active") instead of
-                      alert_condition. alert_flag is captured before being reset,
-                      so LED/log/CLEAR-publish only run when an alert was actually
-                      active, regardless of what alert_condition happens to be
-                      recalculated as on that cycle.
+    2026/07/08 - Version 2.04
+                    - Added handle_version command: publish to JMD_1000/command/get_version
+                      to retrieve current firmware version on JMD_1000/state/version
+                      and confirmation on JMD_1000/response/ack
+                    - Added topic_get_version to command topics and dispatcher
+                    - Fixed duplicate topic_version key in topics dictionary
+                    - Refactored load_config in iCFG.py: iCFG.py defaults are now
+                      the authoritative schema — orphaned keys (e.g. motion_interval)
+                      are silently dropped on load, new keys appear automatically
+                    - Removed motion_interval from iCFG.py defaults and config.txt
+                    - Removed iClk.py.bak from package

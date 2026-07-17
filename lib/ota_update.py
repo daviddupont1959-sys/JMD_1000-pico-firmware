@@ -64,6 +64,14 @@ REPO_BASE_PATH = ""
 # "/" means the root; change to "/project" etc. if needed.
 LOCAL_ROOT = "/"
 
+# Files that should never be overwritten by OTA — these are device-specific
+# or user-configurable and must be managed locally only.
+OTA_EXCLUDE = {
+    "config.txt",
+    "secrets.enc",
+    "wifi.enc",
+}
+
 # Raw-content base URL (no trailing slash).
 RAW_BASE = (
     f"https://raw.githubusercontent.com"
@@ -201,6 +209,12 @@ def check_and_update(force=False):
         remote_sha    = entry.get("sha256", "")
         local_path    = _local_path(repo_path)
         tmp_path      = local_path + ".tmp"
+
+        # Skip device-specific and user-configurable files
+        if repo_path in OTA_EXCLUDE:
+            _log(f"  EXCLUDED (device-specific): {repo_path}")
+            result["skipped"].append(repo_path)
+            continue
 
         # Skip if local copy is already current
         if not force:

@@ -6,10 +6,6 @@
       "sha256": "045ff681af67a8649270a48cc701b8733959fa5135c5a034c71cec452f2ce8c3"
     },
     {
-      "path": "config.txt",
-      "sha256": "7aa97b3ed9d2b1f40819873342c38ba03aceacad263037ce9cf4103a118fa94a"
-    },
-    {
       "path": "lib/ble_advertising.py",
       "sha256": "49ea25cb8984d0efb1dfb2da183d6bd5a56706adf3173d6ea9262f8ec92c9762"
     },
@@ -35,7 +31,7 @@
     },
     {
       "path": "lib/ota_update.py",
-      "sha256": "a317509c18fe5b4649bcd410e06c06c2dbb64a35060863d353608304e5d2fc38"
+      "sha256": "843f14a20d9a094a65dba4ba674fa80dddbe5f9aa4ebaee5bfcb178145cc6c5d"
     },
     {
       "path": "lib/secure_config.py",

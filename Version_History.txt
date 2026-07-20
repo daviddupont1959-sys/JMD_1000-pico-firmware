@@ -278,3 +278,6 @@ Motion Detector by Just Me Designs (JMD)
                       are silently dropped on load, new keys appear automatically
                     - Removed motion_interval from iCFG.py defaults and config.txt
                     - Removed iClk.py.bak from package
+    2026/07/20 - Version 2.04
+    	            - Changed handle_sync_time to account for EPOCH in seconds or milliseconds.
+					

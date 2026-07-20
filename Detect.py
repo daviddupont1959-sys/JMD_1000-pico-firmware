@@ -157,20 +157,14 @@ def handle_sync_time(msg_str):
     try:
         update = json.loads(msg_str)
         epoch = update["epoch"]
-        
-        # Check if the EPOCH is in seconds or milliseconds
-        # Smart detection: 10 billion is a safe threshold for the current era
-        if epoch > 10000000000:
-            epoch = epoch / 1000.0
-            
+        # Convert epoch to a datetime list [year, month, day, hour, minute, second]
         t = time.localtime(epoch)
         datetime_list = [t[0], t[1], t[2], t[3], t[4], t[5]]
-        
         rtc_manager.setRTC(datetime_list)
         client.publish(topics["topic_ack"], b"OK: time synced")
-        
     except Exception as e:
         client.publish(topics["topic_err"], f"ERR: time sync failed: {e}".encode())
+
 
 #This seems to be working
 def handle_cfg_get(msg_str):

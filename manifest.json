@@ -1,9 +1,9 @@
 {
-  "version": "2.04",
+  "version": "2.05",
   "files": [
     {
       "path": "Detect.py",
-      "sha256": "045ff681af67a8649270a48cc701b8733959fa5135c5a034c71cec452f2ce8c3"
+      "sha256": "fb939d905049cb614779fd553a7815134df19b3b6e3cf9dc7c40d3dd56188589"
     },
     {
       "path": "main.py",

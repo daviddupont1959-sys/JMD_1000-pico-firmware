@@ -30,7 +30,7 @@ import ota_update
 '''
 # Variable Definition
 '''
-FW_REV = "2.04"
+FW_REV = "2.05"
 rtc_value = [2000,2,3,8,35,0] # My birthday in the year 2000 (RP2 didn't like 1959!)
 
 # Class variables

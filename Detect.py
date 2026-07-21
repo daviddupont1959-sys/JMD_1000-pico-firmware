@@ -30,7 +30,7 @@ import ota_update
 '''
 # Variable Definition
 '''
-FW_REV = "2.04"
+FW_REV = "2.05"
 rtc_value = [2000,2,3,8,35,0] # My birthday in the year 2000 (RP2 didn't like 1959!)
 
 # Class variables
@@ -155,16 +155,15 @@ def handle_reboot(msg_str):
 #This would require the phone to send the current timestamp as {"epoch": <unix_timestamp>}
 def handle_sync_time(msg_str):
     try:
-        update = json.loads(msg_str)
-        epoch = update["epoch"]
-        # Convert epoch to a datetime list [year, month, day, hour, minute, second]
-        t = time.localtime(epoch)
-        datetime_list = [t[0], t[1], t[2], t[3], t[4], t[5]]
-        rtc_manager.setRTC(datetime_list)
-        client.publish(topics["topic_ack"], b"OK: time synced")
+        init_RTC(secrets)
+        if rtc_manager.get_time_part("year") != 2000:
+            client.publish(topics["topic_ack"], 
+                f"OK: time synced to {rtc_manager.get_formatted_time()}".encode())
+        else:
+            client.publish(topics["topic_err"], 
+                b"ERR: time sync failed - could not reach time server")
     except Exception as e:
         client.publish(topics["topic_err"], f"ERR: time sync failed: {e}".encode())
-
 
 #This seems to be working
 def handle_cfg_get(msg_str):

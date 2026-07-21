@@ -1,9 +1,13 @@
 {
-  "version": "2.04",
+  "version": "2.05",
   "files": [
     {
       "path": "Detect.py",
-      "sha256": "045ff681af67a8649270a48cc701b8733959fa5135c5a034c71cec452f2ce8c3"
+      "sha256": "fb939d905049cb614779fd553a7815134df19b3b6e3cf9dc7c40d3dd56188589"
+    },
+    {
+      "path": "main.py",
+      "sha256": "9493807b5783b8ff2bc65c3b56af20671b15c0079644e3cda62e9d5e906cebf6"
     },
     {
       "path": "lib/ble_advertising.py",
@@ -40,10 +44,6 @@
     {
       "path": "lib/umqtt_simple.py",
       "sha256": "6c3fbe0f42a20866c3a40f8c4fd449e33588c631c414f951d7fea28fb22676fd"
-    },
-    {
-      "path": "main.py",
-      "sha256": "9493807b5783b8ff2bc65c3b56af20671b15c0079644e3cda62e9d5e906cebf6"
     }
   ]
 }

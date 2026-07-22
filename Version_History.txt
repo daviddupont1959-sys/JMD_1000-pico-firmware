@@ -278,3 +278,8 @@ Motion Detector by Just Me Designs (JMD)
                       are silently dropped on load, new keys appear automatically
                     - Removed motion_interval from iCFG.py defaults and config.txt
                     - Removed iClk.py.bak from package
+
+    2026/07/22 - Version 2.06
+                    - Added functions to access log files over MQTT interface.
+
+

@@ -221,7 +221,17 @@ def handle_get_log_list(msg_str):
     try:
         files = os.listdir()
         log_files = [f for f in files if f.startswith('log')]
-        client.publish(topics["topic_log_list"], json.dumps(log_files).encode())
+        payload = json.dumps(log_files).encode()
+
+        # Log locally so this is independently verifiable even if the MQTT
+        # publish itself goes missing (retrieve via topic_get_log_file).
+        log_file.debug(f"get_log_list: sending {len(log_files)} file(s): {log_files}")
+
+        # qos=1 so the broker must acknowledge receipt - qos=0 publishes are
+        # fire-and-forget and can be silently dropped, especially on a
+        # shared public broker like broker.emqx.io.
+        client.publish(topics["topic_log_list"], payload, qos=1)
+        time.sleep_ms(50)  # avoid sending two publishes back-to-back
         client.publish(topics["topic_ack"], f"OK: {len(log_files)} log file(s) found".encode())
     except Exception as e:
         client.publish(topics["topic_err"], f"ERR: listing log files failed: {e}".encode())
@@ -242,7 +252,9 @@ def handle_get_log_file(msg_str):
     try:
         with open(filename, 'r') as f:
             contents = f.read()
-        client.publish(topics["topic_log_file"], json.dumps({"filename": filename, "contents": contents}).encode())
+        payload = json.dumps({"filename": filename, "contents": contents}).encode()
+        client.publish(topics["topic_log_file"], payload, qos=1)
+        time.sleep_ms(50)  # avoid sending two publishes back-to-back
         client.publish(topics["topic_ack"], f"OK: sent log file '{filename}'".encode())
         log_file.info(f"Log file {filename} sent via MQTT.")
     except OSError as e:

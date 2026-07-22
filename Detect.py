@@ -30,7 +30,7 @@ import ota_update
 '''
 # Variable Definition
 '''
-FW_REV = "2.05"
+FW_REV = "2.06"
 rtc_value = [2000,2,3,8,35,0] # My birthday in the year 2000 (RP2 didn't like 1959!)
 
 # Class variables
@@ -82,6 +82,8 @@ topics = {
     "topic_cfg_get"          : f"{client_id}/command/get_config".encode(),
     "topic_update"          : f"{client_id}/command/update".encode(),
     "topic_get_version"     : f"{client_id}/command/get_version".encode(),
+    "topic_get_log_list"    : f"{client_id}/command/get_log_list".encode(),
+    "topic_get_log_file"    : f"{client_id}/command/get_log_file".encode(),
 
     # ----------------------------------------------------
     # RESPONSES (device → phones)
@@ -89,6 +91,8 @@ topics = {
     "topic_ack"            : f"{client_id}/response/ack".encode(),
     "topic_err"            : f"{client_id}/response/error".encode(),
     "topic_log"            : f"{client_id}/response/log".encode(),
+    "topic_log_list"       : f"{client_id}/response/log_list".encode(),
+    "topic_log_file"       : f"{client_id}/response/log_file".encode(),
 
     # ----------------------------------------------------
     # WILDCARD SUBSCRIPTIONS
@@ -212,6 +216,38 @@ def handle_version(msg_str):
     client.publish(topics["topic_version"], f"{FW_REV}".encode(), retain=True, qos=1)
     client.publish(topics["topic_ack"], f"OK: firmware version {FW_REV}".encode())
 
+def handle_get_log_list(msg_str):
+    # Respond with a JSON list of log files (mirrors the BLE "DIR" command)
+    try:
+        files = os.listdir()
+        log_files = [f for f in files if f.startswith('log')]
+        client.publish(topics["topic_log_list"], json.dumps(log_files).encode())
+        client.publish(topics["topic_ack"], f"OK: {len(log_files)} log file(s) found".encode())
+    except Exception as e:
+        client.publish(topics["topic_err"], f"ERR: listing log files failed: {e}".encode())
+
+def handle_get_log_file(msg_str):
+    # msg_str contains the filename to retrieve (mirrors the BLE "FIL" command)
+    filename = (msg_str or "").strip()
+
+    if not filename:
+        client.publish(topics["topic_err"], b"ERR: no filename supplied")
+        return
+
+    # Basic sanity check - only allow plain log filenames, no path traversal
+    if not filename.startswith('log') or '/' in filename or '\\' in filename or '..' in filename:
+        client.publish(topics["topic_err"], f"ERR: invalid log filename '{filename}'".encode())
+        return
+
+    try:
+        with open(filename, 'r') as f:
+            contents = f.read()
+        client.publish(topics["topic_log_file"], json.dumps({"filename": filename, "contents": contents}).encode())
+        client.publish(topics["topic_ack"], f"OK: sent log file '{filename}'".encode())
+        log_file.info(f"Log file {filename} sent via MQTT.")
+    except OSError as e:
+        client.publish(topics["topic_err"], f"ERR: could not read '{filename}': {e}".encode())
+
 # Explicit top-down order, independent of dict iteration behavior
 led_order = ["Working", "WIFI", "BlueTooth", "Motion", "ALERT"]
 
@@ -237,6 +273,8 @@ command_handlers = {
     topics["topic_cfg_get"]: handle_cfg_get,
     topics["topic_update"]: handle_update,
     topics["topic_get_version"]: handle_version,
+    topics["topic_get_log_list"]: handle_get_log_list,
+    topics["topic_get_log_file"]: handle_get_log_file,
 }
 
 

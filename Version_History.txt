@@ -279,7 +279,63 @@ Motion Detector by Just Me Designs (JMD)
                     - Removed motion_interval from iCFG.py defaults and config.txt
                     - Removed iClk.py.bak from package
 
-    2026/07/22 - Version 2.06
-                    - Added functions to access log files over MQTT interface.
+    2026/07/21 - Version 2.05
+                    - Changed function handle_sync_time to trigger getting the time from the
+                        internet instead of needing to get an epoch time from the user.
 
+    2026/07/23 - Version 2.06
+                    - Added get_log_list and get_log_file MQTT commands, mirroring the
+                      existing BLE DIR/FIL commands: publish to
+                      JMD_1000/command/get_log_list to receive a JSON array of log
+                      filenames on JMD_1000/response/log_list, or publish a filename to
+                      JMD_1000/command/get_log_file to receive that file's contents on
+                      JMD_1000/response/log_file. Both confirm on response/ack and
+                      report errors on response/error.
+                    - get_log_file validates the requested filename (must start with
+                      "log", no path separators or "..") to prevent path traversal
+                    - Fixed log_list/log_file responses occasionally going missing over
+                      MQTT: switched these publishes to qos=1 (qos=0 is fire-and-forget
+                      and can be silently dropped, especially on a shared public broker
+                      like broker.emqx.io) and added a brief pause before the follow-up
+                      ack so the two publishes aren't sent back-to-back
+                    - Added a log_file.debug() entry when sending the log list, so the
+                      attempt is independently verifiable even if the MQTT publish itself
+                      goes missing
+                    - Improved ota_update.py error reporting: the errors list in the OTA
+                      result now includes the actual failure reason (download error,
+                      digest mismatch with truncated hashes, or write error) instead of
+                      just the bare filename, so failures are diagnosable from the MQTT
+                      ack alone without needing serial console access
+                    - Added explicit MemoryError handling in ota_update.py's per-file
+                      download step, reporting gc.mem_free() at the point of failure,
+                      plus a gc.collect() immediately before each download to maximize
+                      available heap
 
+    2026/07/23 - Version 3.00
+                    - Major restructure: split the single ~900 line, ~33KB Detect.py
+                      into focused modules so each file OTA-updates independently and
+                      no single file requires anywhere near as much peak memory to
+                      download/verify/write during an update:
+                        - state.py       - shared runtime state, constants, MQTT topics
+                        - utils.py       - lamp_test(), get_dict_value()
+                        - notify.py      - send_inactivity_alert() (ntfy.sh)
+                        - mqtt_client.py - connect_mqtt(), mqtt_callback(), termMsg(),
+                                           publish_time()
+                        - mqtt_handlers.py - all MQTT command handlers + the
+                                           command_handlers dispatch table
+                        - ble_handlers.py - on_rx(), check_bt(), allow_bt() (BLE
+                                           PUT/GET/DIR/FIL/RST commands)
+                        - rtc_helpers.py - init_RTC()
+                        - Detect.py      - hardware init, class setup, boot sequence,
+                                           and the main detection loop only
+                    - Replaced the old single-file "global <name>" pattern with a
+                      shared state.py module: every other module does `import state`
+                      and reads/writes state.<name> directly, since module-attribute
+                      assignment (unlike `global`) is visible across files
+                    - state.command_handlers is populated by mqtt_handlers.py at import
+                      time rather than exported directly, to avoid a circular import
+                      (mqtt_handlers -> rtc_helpers -> mqtt_client -> mqtt_handlers)
+                    - No functional/behavioral changes versus 2.06 - verified by running
+                      the split code end-to-end against stub hardware modules (boot
+                      sequence, MQTT connect, RTC sync) and by simulating MQTT command
+                      dispatch through all 9 command topics

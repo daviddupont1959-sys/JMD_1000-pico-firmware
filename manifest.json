@@ -1,13 +1,41 @@
 {
-  "version": "2.06",
+  "version": "3.00",
   "files": [
     {
       "path": "Detect.py",
-      "sha256": "75cba21e3ca738c12a8b9f033096c220ce7c0ce45ece59f6dc2ed2021be7cbed"
+      "sha256": "aee7c72a224bc02940fa29fb9d6d7ad7477e92eb95b0149ea6d092bda70078ef"
+    },
+    {
+      "path": "ble_handlers.py",
+      "sha256": "67e64c89130b99c7c2d2960f8937459ac8c106062c56ff74f4d1489259fda191"
     },
     {
       "path": "main.py",
       "sha256": "9493807b5783b8ff2bc65c3b56af20671b15c0079644e3cda62e9d5e906cebf6"
+    },
+    {
+      "path": "mqtt_client.py",
+      "sha256": "dac149d7d9f5645521f3ccb40d0ae108a9692f25b76842ad52064031478ddd51"
+    },
+    {
+      "path": "mqtt_handlers.py",
+      "sha256": "6370ebd8192e8597ebe1ffd75acc90db4599f5fcb6c4900c80acef32a979922d"
+    },
+    {
+      "path": "notify.py",
+      "sha256": "4c5701ca407c63515c37eb6efce05133b5c21fc21e8f213bedb253fb8b803cbe"
+    },
+    {
+      "path": "rtc_helpers.py",
+      "sha256": "6bdda433dbd41800a4c3c75b2d632d64258bb3210955476ffed2725c12f15495"
+    },
+    {
+      "path": "state.py",
+      "sha256": "ed0c5370549a74543e1f4aed2c08ac8ad371167ca2a8775edb6640f758cfc36b"
+    },
+    {
+      "path": "utils.py",
+      "sha256": "408cbfdcdb30a002026991481d625cd45c09afad05ce9cb353934572cc0e6f58"
     },
     {
       "path": "lib/ble_advertising.py",

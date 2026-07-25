@@ -19,7 +19,7 @@
     },
     {
       "path": "mqtt_handlers.py",
-      "sha256": "6370ebd8192e8597ebe1ffd75acc90db4599f5fcb6c4900c80acef32a979922d"
+      "sha256": "98065d8506401b030f0ef046a604176e69d184599163e739b33b68ce9c9e5b5c"
     },
     {
       "path": "notify.py",
@@ -55,7 +55,7 @@
     },
     {
       "path": "lib/iLogFile.py",
-      "sha256": "13ca959396e55f0b1bdc31a473a096dc617b7435c4a592ff700bd8a8c0dc153e"
+      "sha256": "e40547427a0276cca1404030bb2fd99a0f614f3ef6af820d990de21186e745dd"
     },
     {
       "path": "lib/iNet.py",

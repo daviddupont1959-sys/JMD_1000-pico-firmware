@@ -48,7 +48,9 @@ def handle_set_config(msg_str):
         state.myConfig.config = trial
         state.myConfig._sanitize()
         state.myConfig.save_config()
-
+        #Make sure the log file handler knows that the log level might have changed.
+        state.log_file.set_level(state.myConfig.config["log_level"])
+        
         state.client.publish(state.topics["topic_ack"], b"OK: config updated")
     except Exception as e:
         state.client.publish(state.topics["topic_err"], f"ERR: {e}".encode())

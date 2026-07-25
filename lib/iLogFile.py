@@ -96,6 +96,10 @@ class LogManager:
                 pass
 
 
+    def set_level(self, level):
+            """Dynamically update the minimum log level."""
+            self.level = self.LEVELS.get(level.upper() if isinstance(level, str) else level, 20)
+        
     def _write_log(self, level_name, message):
         """
         Write a log message to the file.

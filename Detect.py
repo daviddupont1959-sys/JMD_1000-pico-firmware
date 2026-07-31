@@ -155,6 +155,23 @@ while True: #This acts like a repeat / until loop
                 break
         break
 
+#Sync the RTC with real time BEFORE issuing any startup log entries or
+#notifications, so those messages carry an accurate timestamp instead of
+#the year-2000 placeholder. Retry a few times before giving up.
+rtc_synced = False
+for _rtc_attempt in range(5):
+    init_RTC(state.secrets) #Gets local time from the internet, requires internet connection
+    if state.rtc_manager.get_time_part("year") != 2000:
+        rtc_synced = True
+        break
+    print("Getting time from internet failed. Retrying before startup notification...")
+    time.sleep(5)
+
+if rtc_synced:
+    termMsg(state.topics["topic_log"], f"Time updated from Internet at {state.rtc_manager.get_formatted_time()}.")
+else:
+    print("Unable to sync RTC before startup notification; timestamps may be inaccurate until next sync.")
+
 #Send start up notification
 state.log_file.info(f"Detector started. Firmware: {state.FW_REV}.")
 notify.send_inactivity_alert(f"Motion detector started at {state.myConfig.config['location']}. Firmware: {state.FW_REV}.")
@@ -163,6 +180,7 @@ notify.send_inactivity_alert(f"Motion detector started at {state.myConfig.config
 while True:
     #Get the location specific time from the internet
     #Set up the real time clock (RTC)
+    #This is redundant the first time, but necessary for SundayMorning or NeedUpdate triggers.
     init_RTC(state.secrets) #Gets local time from the internet, requires internet connection
     termMsg(state.topics["topic_log"], f"Time updated from Internet at {state.rtc_manager.get_formatted_time()}.")
     #Start by assuming I just saw motion

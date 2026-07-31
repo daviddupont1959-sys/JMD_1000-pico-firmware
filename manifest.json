@@ -1,9 +1,9 @@
 {
-  "version": "3.00",
+  "version": "3.01",
   "files": [
     {
       "path": "Detect.py",
-      "sha256": "aee7c72a224bc02940fa29fb9d6d7ad7477e92eb95b0149ea6d092bda70078ef"
+      "sha256": "873cac3335325085b513e4c328cafb49ae4ba792a66183f927c8e14da93266fc"
     },
     {
       "path": "ble_handlers.py",
@@ -31,7 +31,7 @@
     },
     {
       "path": "state.py",
-      "sha256": "ed0c5370549a74543e1f4aed2c08ac8ad371167ca2a8775edb6640f758cfc36b"
+      "sha256": "bc1572cdb15ab9cbb5614968e67e4c8561b97b2d6691d31ea842510b745a406a"
     },
     {
       "path": "utils.py",

@@ -95,10 +95,13 @@ def publish_time():
     termMsg(state.topics["topic_time"], f"publishing: {formatted_time_basic} to {state.topics['topic_time']}")
     # Get the True/False value for awake state and convert it to text
     awake_payload = str(state.rtc_manager.is_in_awake_window(state.myConfig.config["awake_window"]))
+    # Current alert status, mirrored from Detect.py's main loop via state.alert_active
+    alert_payload = b"SET" if state.alert_active else b"CLEAR"
 
     try:
         state.client.publish(state.topics["topic_time"], formatted_time_basic.encode())
         state.client.publish(state.topics["topic_awake"], awake_payload)
+        state.client.publish(state.topics["topic_alert"], alert_payload, retain=False, qos=0)
     except OSError as e:
         print(f"publish_time failed ({e}), checking WiFi...")
         # Check WiFi first — MQTT reconnect is pointless if WiFi is down

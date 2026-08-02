@@ -93,5 +93,10 @@ rtc_manager = None
 secrets = None
 leds = {}
 
+# Mirrors Detect.py's inactivity-alert flag (True while an alert is active).
+# Set/cleared in Detect.py's main loop, read by mqtt_client.publish_time()
+# so the periodic time broadcast can also report current alert status.
+alert_active = False
+
 # WiFi credentials dict, loaded at boot and updatable over BLE ("PUT").
 WiFi_Creds = None

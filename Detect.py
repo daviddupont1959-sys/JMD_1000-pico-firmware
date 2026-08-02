@@ -247,8 +247,8 @@ while True:
                     pass
 
 
-            #Send the current time (every 5 seconds) to the MQTT broker
-            if time.time() % 5 == 0:
+            #Send the current time (every 60 seconds) to the MQTT broker
+            if time.time() % 60 == 0:
                 try:
                     publish_time() #Only send the time every 5 seconds
                 except OSError as e:
@@ -267,6 +267,7 @@ while True:
                 if alert_condition:
                     alert_condition = False
                     state.leds["ALERT"].off()
+                    state.alert_active = False
                     # Need to send alert cancel message
                     state.log_file.info("ALERT cleared!")
                     alert_message_text = f"At {state.rtc_manager.seconds_to_time(time.time())} motion was detected at {state.myConfig.config['location']}, alert cancelled."
@@ -290,6 +291,7 @@ while True:
                 if alert_condition and not alert_flag: # no motion for at least the alert_time, Notify!
                     alert_flag = True
                     state.leds["ALERT"].on()
+                    state.alert_active = True
                     # Need to send alert active message
                     state.log_file.info("ALERT Triggered!")
 

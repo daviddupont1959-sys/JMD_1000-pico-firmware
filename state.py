@@ -15,7 +15,7 @@ safe for every other module to import without risking circular imports.
 # ----------------------------------------------------
 # Firmware / notification constants
 # ----------------------------------------------------
-FW_REV = "3.01"
+FW_REV = "3.02"
 NTFY_URL = "https://ntfy.sh/jmd_1000_safety_alert_4784"
 
 # ----------------------------------------------------

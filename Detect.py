@@ -238,22 +238,26 @@ while True:
                 time.sleep(2)
                 state.client = connect_mqtt()
 
-            # Send a keep-alive ping every 60 seconds to prevent broker
-            # dropping the subscription on long-running sessions
+# Send periodic keep-alive, time update, and state statuses every 60 seconds
             if time.time() % 60 == 0:
                 try:
                     state.client.ping()
                 except:
                     pass
 
-
-            #Send the current time (every 60 seconds) to the MQTT broker
-            if time.time() % 60 == 0:
                 try:
-                    publish_time() #Only send the time every 5 seconds
+                    publish_time()
                 except OSError as e:
                     print(f"publish_time failed ({e}), will retry next cycle")
 
+                try:
+                    awake_status = "ON" if state.rtc_manager.is_in_awake_window(state.myConfig.config["awake_window"]) else "OFF"
+                    state.client.publish(state.topics["topic_state_awake"], awake_status.encode(), retain=False, qos=0)
+                    
+                    inactivity_status = "SET" if alert_condition else "CLEAR"
+                    state.client.publish(state.topics["topic_alert_inactivity"], inactivity_status.encode(), retain=False, qos=0)
+                except OSError as e:
+                    print(f"Failed to publish periodic status updates: {e}")
             detector_state = motion_detector_pin.value()	# Check Motion detector
             state.leds["Motion"].value(detector_state)
 

@@ -1,0 +1,27 @@
+{
+  "_comment": "One file for every unit. A board listed under 'boards' gets its own entry; any other board gets 'default' (the real unit, JMD_1000, redesigned hardware) plus a warning in the log and start-up notification. Board IDs: import machine, binascii; print(binascii.hexlify(machine.unique_id()).decode())",
+  "default": {
+    "client_id": "JMD_1000",
+    "motion_detector_pin": 28,
+    "leds": {
+        "Working": 20,
+        "WIFI": 19,
+        "BlueTooth": 18,
+        "Motion": 17,
+        "ALERT": 16
+    }
+  },
+  "boards": {
+    "e66164084348452b": {
+      "client_id": "JMD_1001",
+      "motion_detector_pin": 1,
+      "leds": {
+        "Working": 9,
+        "WIFI": 8,
+        "BlueTooth": 7,
+        "Motion": 6,
+        "ALERT": 5
+      }
+    }
+  }
+}

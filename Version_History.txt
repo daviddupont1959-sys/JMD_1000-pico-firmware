@@ -1,3 +1,4 @@
+
 '''
 Motion Detector by Just Me Designs (JMD)
     This project is to create a motion detector which can send email messages to configured addresses in the event that no motion is detected after
@@ -339,3 +340,234 @@ Motion Detector by Just Me Designs (JMD)
                       the split code end-to-end against stub hardware modules (boot
                       sequence, MQTT connect, RTC sync) and by simulating MQTT command
                       dispatch through all 9 command topics
+
+    2026/08/02 - Version 3.01
+                    - Moved the RTC sync (init_RTC) so it now runs, and is retried up
+                      to 5 times, BEFORE the startup log entry and inactivity
+                      notification are sent. Previously those startup messages could
+                      go out while the RTC still held the year-2000 placeholder,
+                      giving them an inaccurate timestamp.
+                    - publish_time() now also republishes current alert status
+                      (topic_alert: "SET"/"CLEAR") alongside the time and awake-state
+                      messages, mirrored from a new state.alert_active flag that
+                      Detect.py's main loop updates whenever the alert is triggered
+                      or cleared. This lets a client that joins/reconnects mid-alert
+                      learn the current state without waiting for the next
+                      SET/CLEAR transition.
+                    - Changed the periodic time/awake/alert publish interval in
+                      Detect.py's main loop from every 5 seconds to every 60 seconds
+                      to reduce MQTT traffic
+
+    2026/08/04 - Version 3.02
+		    - Added HW_Config.JSON to move the hardware configuration to a separate 
+			file. This way I can develop / experiment with the old hardware
+			and later switch the HW_Config file to support the redesigned hardware.
+
+    2026/09/25 - Version 3.03
+                    - Fixed ALERT LED (and state.alert_active / MQTT "CLEAR" message)
+                      sometimes staying on after motion resumed. The motion-detected
+                      branch in Detect.py was checking alert_condition to decide
+                      whether to clear the alert, but alert_condition is recomputed
+                      from scratch every tick in the no-motion branch and can flip
+                      back to False on its own (e.g. is_in_awake_window() becoming
+                      False as the clock passes the end of the awake window) while
+                      the LED/alert_active are still set from when the alert fired.
+                      When that happened, motion arriving would skip the "turn off
+                      alert" block entirely - LED, state.alert_active, and the
+                      topic_alert "CLEAR" publish were all left stuck in the alert
+                      state, even though alert_flag was still (incorrectly) reset
+                      to False right away regardless.
+                    - Fix: gate the clear-alert block on alert_flag instead, which
+                      is only ever set True when the alert actually fires and only
+                      ever cleared here, so it always reflects whether the LED is
+                      currently on. Also moved the alert_flag = False reset inside
+                      that block instead of unconditionally at the top of the
+                      motion-detected branch, so it no longer gets cleared before
+                      it's checked.
+
+    2026/10/20 - Version 3.10  (reliability + diagnostics release; supersedes the unreleased 3.02/3.03)
+                    Numbered 3.10 rather than 3.04 because of its size: two new modules,
+                    new failure behaviour and new files on the Pico. 3.02/3.03 were never
+                    deployed, so the device goes straight from 3.01 to 3.10.
+                    Background: a 4+ hour absence produced no alert. Nothing in the logs
+                    proved the cause, so this release (a) removes every failure path found
+                    while reading the code and (b) writes the evidence needed next time.
+                    Not yet verified on hardware - bench test before deploying (see end).
+
+                    3.03 working-copy changes that were never recorded above:
+                    - Detect.py now publishes motion ON/OFF to topic_last_motion.
+                    - Periodic time/awake/alert publish interval is 15 s (3.01 had 60 s).
+                    - iNet.connect() disables WiFi power save to keep inbound MQTT responsive.
+                      (As written it called an undefined name, "wifi.config(...)", which
+                      raised NameError on every connect - an OTA of 3.03 would have left
+                      the device unable to get online and unable to fetch a fix. Fixed.)
+
+                    FILES CHANGED: Detect.py, main.py, mqtt_client.py, notify.py, state.py,
+                    lib/iNet.py.   NEW FILES: diag.py, monitor.py.  (HW_Config.json unchanged.)
+
+                    Alert reliability
+                    - notify.send_inactivity_alert() now returns True only when ntfy.sh
+                      answers HTTP 200, and never raises. It used to swallow every failure,
+                      so a failed alert was lost forever (alert_flag was already set).
+                      Alerts and "alert cancelled" notices are now queued and retried every
+                      60 s until delivered. If an alert is cancelled before its notification
+                      went out, both are dropped (logged) instead of sending a stale pair.
+                    - How long the house has been quiet now survives a restart. The time of
+                      last motion is saved to runstate.json (at most every 15 min; always after
+                      a quiet spell of 1 h or more). After a restart it is restored if less
+                      than 12 h old, so a reboot while the house is empty no longer silently
+                      cancels the alert (previously ever_seen_motion reset to False and nothing
+                      could fire until motion was seen). The saved time can only be earlier
+                      than the truth, so the alert can come early after a restart, never late.
+                    - The quiet timer is now an accumulated count of real elapsed milliseconds
+                      (time.ticks_ms) and is reset only by motion. It is no longer reset when
+                      the first sub-loop is re-entered, and it is immune to clock re-syncs and
+                      DST jumps.
+                    - A missing/invalid inactivity_alert falls back to 4 h, and an invalid
+                      awake_window is treated as "awake", instead of raising TypeError.
+
+                    MQTT is now best-effort (broker trouble can no longer stop monitoring)
+                    - connect_mqtt() returns None on failure; it never raised. Detect.py
+                      caught MQTTException, so an unreachable broker at BOOT crashed with
+                      AttributeError ('NoneType' has no attribute 'publish') and, with the old
+                      main.py, the Pico then sat idle until power-cycled. 3.03 also crashed
+                      on the first motion seen during a broker outage (unguarded publish of
+                      the new motion ON/OFF message). Now: boot continues without MQTT; every
+                      publish goes through safe_publish() (never raises, drops the dead client);
+                      reconnects are rate limited (MQTT 60 s, WiFi 120 s) so a long outage
+                      cannot leave the PIR unread for long stretches.
+                    - mqtt_callback() catches exceptions from command handlers, so a malformed
+                      command on the public broker cannot crash the detector.
+                    - Time/awake/alert publish and keep-alive ping use elapsed-time checks
+                      instead of "time.time() % N == 0". Each loop pass takes a little over
+                      a second, so the old test skipped the magic second fairly often; HA's
+                      expire_after then flagged the sensors unavailable (the minute-aligned,
+                      ~40%-of-the-day "unavailable" pattern seen in the HA history).
+                    - publish_time() no longer reconnects by itself and returns True/False.
+
+                    Crash recovery (main.py)
+                    - Any exception from Detect.py (or Detect.py returning) is recorded in
+                      crash.json and the Pico resets after 10 s, doubling per consecutive
+                      crash up to 10 min. The next boot logs it (ERROR) and includes it in the
+                      start-up push notification. The counter clears after 10 stable minutes.
+                    - Create an empty file named debug.flag on the Pico to disable the reset
+                      while developing. Ctrl-C is not intercepted.
+                    - A failing OneTimeCode.py no longer prevents Detect.py from starting.
+                    - NOT included: a hardware watchdog (WDT). The RP2040 WDT maxes out at
+                      about 8 s and several calls (init_RTC, BLE window, HTTP) can block
+                      longer; a WDT would risk reset loops. A hung (not crashed) Pico is
+                      still possible - suggest an HA alert on the Time entity.
+
+                    Other fixes
+                    - Detect.py: missing/invalid HW_Config.json falls back to the original
+                      pin assignments (and logs it) instead of aborting at boot.
+                    - Sunday 02:01 clock re-sync (DST) is now checked every pass. It was only
+                      evaluated after motion, so with nobody moving at 2 AM it never ran.
+                    - iNet.connect(): a connection completing during the last wait second was
+                      treated as a timeout.
+                    - iNet.getDateTime(): the bound port-80 socket and the HTTP response were
+                      not closed when the time request failed (later attempts could fail with
+                      EADDRINUSE). Now always closed.
+
+                    Logging (log_file levels)
+                    - ERROR: HW_Config fallback; WiFi lost; MQTT lost (with reason); MQTT
+                      unavailable at boot; notification failed (rate limited, with reason);
+                      clock sync failed; command handler exception; bad config values;
+                      previous run crashed.
+                    - ALERT: ALERT Triggered! / ALERT cleared! (unchanged text, now at the ALERT
+                      level so they survive a higher log_level); notification delivered; alert
+                      cancelled before delivery.
+                    - INFO: "Detector started. Firmware, reset cause"; config summary
+                      (threshold, awake window); restored last-motion time; first motion since
+                      start-up; motion after 1 h+ quiet; WiFi / MQTT restored (with outage
+                      length); awake window opened/closed; weekly re-sync.
+                    - DEBUG: hourly heartbeat "HB up= quiet= edges= seen= awake= thr= wifi=
+                      mqtt= free=" (edges = PIR rising edges in the last hour: a high number
+                      with nobody home means the sensor is false-triggering); clock syncs.
+                    - Repeating errors are written at most once per interval so the 2 KB
+                      files are not flooded. At DEBUG the hourly heartbeat limits history to
+                      a few days; use INFO or ALERT for long retention.
+
+                    Bench test before deploying
+                    1. Boot with the broker unreachable: expect "MQTT unavailable at boot" and
+                       normal operation. 2. Set inactivity_alert to 120 s: ALERT LED, push
+                       notification and log entry at 2 min; move: cancel notice. 3. Turn WiFi
+                       off during an alert: notification arrives after WiFi returns. 4. Power-
+                       cycle 1 min into a quiet spell: log shows "Restored last motion". 5. Check
+                       gc.mem_free in the HB line is comfortably above 50K.
+
+    2026/10/21 - Version 3.11  (follow-up to 3.10, from the first overnight development run)
+                    FILES CHANGED: Detect.py, monitor.py, notify.py, state.py.
+                    (main.py, diag.py, mqtt_client.py, lib/iNet.py are unchanged from 3.10.)
+
+                    Memory (the log showed ENOMEM on the start-up notification and a clock
+                    sync that ran back to back, 15:25:49 on 10/20)
+                    - gc.collect() before each HTTPS request (ntfy notification and the
+                      internet time lookup), and notify retries once immediately if the
+                      request fails with ENOMEM. The 60 s retry queue remains the backstop.
+                    - The hourly heartbeat now collects garbage before reading free memory.
+                      The 3.10 readings (11K to 119K) jumped around with GC timing and could
+                      not be interpreted.
+
+                    Config visibility (a mistyped awake-window end of 03:57 instead of 15:57
+                    silently became a 21 h 28 min window, because an end earlier than the
+                    start means "crosses midnight", and nothing recorded the change)
+                    - The start-up log line shows the window readably with its length, e.g.
+                      "awake_window=06:29-03:57 (21h28m awake)", plus the unit name.
+                    - If the awake window is longer than 20 h or shorter than 6 h, an ERROR
+                      is logged and the warning is added to the start-up push notification.
+                    - Every 10 s the inactivity threshold, awake window, location and log level
+                      are compared with their last known values; any change is logged at INFO
+                      as "Config changed: setting old -> new", whichever path made it (BLE
+                      app, MQTT command, file edit). A new long/short window also logs the
+                      ERROR warning above.
+
+                    Unit identity (so one state.py is safe for both units)
+                    - client_id defaults to JMD_1000 (the real unit). A development unit sets
+                      "client_id": "JMD_1001" in its own HW_Config.json, which OTA updates do
+                      not touch. client_id sets the MQTT client id and topics AND the ntfy
+                      topic. The start-up "Hello" message uses it instead of a hardcoded name.
+                    - ACTION: add the client_id entry to the development unit's HW_Config.json
+                      BEFORE loading 3.11 on it. Without it the dev unit would identify as
+                      JMD_1000: it would notify your sister, appear in Home Assistant, and
+                      fight the real unit for the MQTT client id on the public broker.
+
+                    Other
+                    - "Clock synced" is no longer logged when init_RTC failed quietly (it
+                      logs its own error and leaves the clock alone). A DEBUG line says the
+                      sync did not complete and the current time is kept.
+
+    2026/10/21 - Version 3.12  (one hardware config file for every unit)
+                    FILES CHANGED: Detect.py, state.py.   NEW FILE: hwconfig.py (deliver it
+                    together with state.py).   NEW HW_Config.json format (see below).
+
+                    - hwconfig.py picks the unit's settings (client_id, motion pin, LED pins)
+                      from ONE shared HW_Config.json by the board's unique ID
+                      (machine.unique_id()), so the file no longer has to be copied per unit
+                      and a dev board cannot pick up the real unit's identity (or the reverse).
+                    - File format: {"default": <unit>, "boards": {"<board id>": <unit>, ...}}.
+                      A board listed under "boards" uses its own entry. Any other board uses
+                      "default" and the problem is reported: ERROR in the log and a note in
+                      the start-up push notification, which includes the board's ID so it
+                      can be added to the file.
+                    - The 3.02-3.11 single-unit format (client_id/pins at the top level) still
+                      works unchanged.
+                    - A missing or unusable file falls back to built-in settings with a
+                      warning. state.py also falls back to them if hwconfig.py is missing
+                      (partial OTA), so the firmware can still start.
+                    - Start-up log gains: "Hardware: board=<id> unit=<client_id>
+                      config=<which entry> PIR=GPIO<n>".
+
+                    Units (important - the default is the REAL unit):
+                      JMD_1000  real unit at Dad's house, redesigned hardware:
+                                PIR GPIO 1; LEDs Working 9, WIFI 8, BlueTooth 7, Motion 6, ALERT 5.
+                                This is the "default" entry and the built-in fallback, so it
+                                works even if the board is unlisted or HW_Config.json is absent.
+                      JMD_1001  development unit, original hardware, board e66164084348452b:
+                                PIR GPIO 28; LEDs 20, 19, 18, 17, 16. Listed under "boards".
+                    Note: 3.01 and earlier hard-code the ORIGINAL pins (PIR 28, LEDs 16-20).
+                    Firmware with those pins hard-coded cannot read a PIR or drive LEDs on the
+                    redesigned hardware.
+
+                    Board IDs:  import machine, binascii
+                                print(binascii.hexlify(machine.unique_id()).decode())

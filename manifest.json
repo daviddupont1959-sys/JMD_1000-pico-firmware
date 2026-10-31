@@ -1,21 +1,25 @@
 {
-  "version": "3.02",
+  "version": "3.12",
   "files": [
-    {
-      "path": "Detect.py",
-      "sha256": "b16702d1cbf6448ef5656a595220319138e001dd8a26e35f183f2b702300870f"
-    },
     {
       "path": "ble_handlers.py",
       "sha256": "67e64c89130b99c7c2d2960f8937459ac8c106062c56ff74f4d1489259fda191"
     },
     {
-      "path": "main.py",
-      "sha256": "9493807b5783b8ff2bc65c3b56af20671b15c0079644e3cda62e9d5e906cebf6"
+      "path": "diag.py",
+      "sha256": "4f7f39b0be2b246d9106795cef35734691530c482ac32d0e26ead166a6a29cc5"
+    },
+    {
+      "path": "hwconfig.py",
+      "sha256": "3d8e5e8b252677069ac2ded52659e1586195316381f5e07654764f3ba5e81817"
+    },
+    {
+      "path": "monitor.py",
+      "sha256": "43fb1af1866d8a39e9959c15e13a15d2b2646364e109a75604d1cf9d5a55fd07"
     },
     {
       "path": "mqtt_client.py",
-      "sha256": "27c5d209a31ff15c63e6e79acd8fe017f50c2ecfd5936891f29eb8271f900295"
+      "sha256": "6320d7724ceb2d58ad9621ce35646cd779162e1c4d614dfaffb54f6ff781b725"
     },
     {
       "path": "mqtt_handlers.py",
@@ -23,7 +27,7 @@
     },
     {
       "path": "notify.py",
-      "sha256": "4c5701ca407c63515c37eb6efce05133b5c21fc21e8f213bedb253fb8b803cbe"
+      "sha256": "3c6838f3c6037c1bf7187e59c065c43837738a372cf9e69b2ffc464500334c8d"
     },
     {
       "path": "rtc_helpers.py",
@@ -31,7 +35,7 @@
     },
     {
       "path": "state.py",
-      "sha256": "6251763c820298fb9b05c8dc10b373435110e47cdfaa7e879cf9fc16f69920b0"
+      "sha256": "aa7cd1e7c06c1a60153dab9fccb289badc2797b5f2c15f62c7597bb1bd7414bd"
     },
     {
       "path": "utils.py",
@@ -59,7 +63,7 @@
     },
     {
       "path": "lib/iNet.py",
-      "sha256": "aa79361992ecd699d499cda59e19a18ddb972899c01ac04f9adaa66ca3ebbc8f"
+      "sha256": "bd03a0c61e85263aaf715bebb361d3a780489b9b1f0665b8ece4554a5e3d2bbf"
     },
     {
       "path": "lib/ota_update.py",
@@ -72,6 +76,18 @@
     {
       "path": "lib/umqtt_simple.py",
       "sha256": "6c3fbe0f42a20866c3a40f8c4fd449e33588c631c414f951d7fea28fb22676fd"
+    },
+    {
+      "path": "HW_Config.json",
+      "sha256": "55e327908b69093f203563055392bd7515c593256b06fc14a72af98cbceee80b"
+    },
+	    {
+      "path": "Detect.py",
+      "sha256": "d1f2b42c7e139302a6975193fa2f970679077ae2c42144d6ba52fb36956f215e"
+    },
+    {
+      "path": "main.py",
+      "sha256": "fd4aea3cccfbdaf2fe3350f61221c9a5a9e826eb217d7d2de456050fe31b8176"
     }
   ]
 }

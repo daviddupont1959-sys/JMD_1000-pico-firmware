@@ -13,17 +13,32 @@ safe for every other module to import without risking circular imports.
 """
 
 # ----------------------------------------------------
-# Firmware / notification constants
-# ----------------------------------------------------
-FW_REV = "3.02"
-NTFY_URL = "https://ntfy.sh/jmd_1000_safety_alert_4784"
-
-# ----------------------------------------------------
 # MQTT connection settings
 # ----------------------------------------------------
 mqtt_server = 'broker.emqx.io'
 #client_id = 'devices/JMD_1000'
-client_id = 'JMD_1000'
+# Identity and wiring of THIS unit come from HW_Config.json, picked by the
+# board's unique ID (see hwconfig.py). client_id sets the MQTT client id and
+# topics AND the ntfy topic. If hwconfig.py is somehow missing (partial OTA) the
+# built-in settings of the real unit (redesigned hardware) are used, so the
+# firmware can still start.
+try:
+    import hwconfig
+    hw_config, hw_source, hw_warning = hwconfig.load()
+    board_id = hwconfig.board_id()
+except Exception as _e:
+    hw_config = {"client_id": "JMD_1000", "motion_detector_pin": 1,
+                 "leds": {"Working": 9, "WIFI": 8, "BlueTooth": 7, "Motion": 6, "ALERT": 5}}
+    hw_source = "built-in defaults"
+    hw_warning = "hwconfig unavailable (%s); using built-in default pins" % _e
+    board_id = ""
+client_id = hw_config["client_id"]
+
+# ----------------------------------------------------
+# Firmware / notification constants
+# ----------------------------------------------------
+FW_REV = "3.12"
+NTFY_URL = "https://ntfy.sh/" + client_id + "_safety_alert_4784"
 
 # ----------------------------------------------------
 # MQTT Topics

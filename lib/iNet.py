@@ -46,6 +46,12 @@ class InternetManager:
     def connect(self, seconds = 5):
         network.hostname("JMD-1000")
         self.wlan.active(True)
+        # Disable power saving on the Pico W to keep inbound MQTT responsive
+        try:
+            self.wlan.config(pm=0xa11140)
+        except Exception as e:
+            print(f"Could not disable WiFi power save: {e}")
+        
         retry_time = seconds
         #Only try to connect if I'm not already connected.
         if not self.wlan.isconnected(): #self.connect_flag:
@@ -63,7 +69,7 @@ class InternetManager:
                     seconds -= 1
                     time.sleep(1)
 
-                if seconds == 0: # If seconds == 0 we timed out.
+                if not self.wlan.isconnected(): # Still not connected after waiting: timed out.
                     self.led.off()
                     print(f"Internet connection try # {retry_count} timed out!")
                     time.sleep(2)
@@ -154,7 +160,11 @@ class InternetManager:
         s.listen(1)
 
         # Get current time, based on router IP address' location in the real world.
-        timeJSON = urequests.get(self._dateTimeURL)
+        try:
+            timeJSON = urequests.get(self._dateTimeURL)
+        except Exception:
+            s.close()  # don't leave port 80 bound, or every later attempt fails with EADDRINUSE
+            raise
         #https://api.ipgeolocation.io/timezone?apiKey=4324de1bd6ac40d780b0d8c6fc8a1d20&ip=172.56.93.182
         
         ''' Example Response
@@ -194,7 +204,10 @@ class InternetManager:
         s.close()
         data = [] # Will be a list of [year, month, date, hour, minute, second]
         #This part parses the JSON text to get year, month, date, hour, minute, and second
-        startTime = timeJSON.json()['date_time'] #2024-01-04 15:05:54 for example
+        try:
+            startTime = timeJSON.json()['date_time'] #2024-01-04 15:05:54 for example
+        finally:
+            timeJSON.close()
     #    print('Start time: ' , startTime)
 
         for x in startTime.split(' ')[0].split('-'): #Get the date parts
